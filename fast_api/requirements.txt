@@ -9,4 +9,5 @@ numpy==2.4.6
 pydantic[email]==2.8.2
 pydantic-settings==2.3.4
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
