@@ -1,7 +1,8 @@
 # app/auth/router.py
 from datetime import datetime, timezone
+import os
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import JWTError
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,8 @@ from app.auth.schemas import (
     UserResponse,
 )
 from app.auth.security import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_EXPIRE_DAYS,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -24,6 +27,30 @@ from app.auth.security import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")
+
+
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str | None = None):
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    if refresh_token:
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=COOKIE_SECURE,
+            samesite=COOKIE_SAMESITE,
+            max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        )
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -59,7 +86,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
     # 1. Find user
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.hashed_password):
@@ -82,16 +109,26 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     db.add(session)
     db.commit()
 
+    _set_auth_cookies(response=response, access_token=access_token, refresh_token=refresh_token)
+
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
-def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
+def refresh(
+    request: Request,
+    response: Response,
+    body: RefreshRequest | None = None,
+    db: Session = Depends(get_db),
+):
     credentials_exception = HTTPException(status_code=401, detail="Invalid refresh token")
+    refresh_token = body.refresh_token if body else request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise credentials_exception
 
     # 1. Decode the refresh token
     try:
-        payload = decode_token(body.refresh_token)
+        payload = decode_token(refresh_token)
         email: str = payload.get("sub")
         token_type: str = payload.get("type")
         if email is None or token_type != "refresh":
@@ -101,7 +138,7 @@ def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
 
     # 2. Verify it exists in DB and is not expired
     session = db.query(DBSession).filter(
-        DBSession.refresh_token == body.refresh_token
+        DBSession.refresh_token == refresh_token
     ).first()
 
     if not session or session.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
@@ -114,6 +151,7 @@ def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
 
     role_name = user.role.name if user.role else None
     new_access_token = create_access_token(subject=user.email, role=role_name)
+    _set_auth_cookies(response=response, access_token=new_access_token)
 
     return AccessTokenResponse(access_token=new_access_token)
 
