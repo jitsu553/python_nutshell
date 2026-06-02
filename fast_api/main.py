@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env for local development
+
 from fastapi import FastAPI
 import logging
 

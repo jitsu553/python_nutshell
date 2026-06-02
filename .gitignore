@@ -11,7 +11,6 @@ ENV/
 
 # Environment variables
 .env
-.env.*
 
 # Test and coverage artifacts
 .pytest_cache/

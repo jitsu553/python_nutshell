@@ -19,8 +19,13 @@ services:
   api:
     build: .
     container_name: fast_api_app
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/fastapi_db
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/fastapi_db}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-string}
     ports:
       - "8000:8000"
     depends_on:
