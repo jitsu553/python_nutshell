@@ -13,6 +13,8 @@ from app.routers.ml import router as ml_router
 from app.auth.router import router as auth_router
 from app.external_api_aggregator.config import settings as external_aggregator_settings
 from app.external_api_aggregator.router import router as external_aggregator_router
+from app.redis_lab.client import connect_redis, close_redis
+from app.redis_lab.router import router as redis_lab_router
 
 from app.auth import models as auth_models
 from app.db import engine
@@ -47,6 +49,14 @@ async def startup_external_aggregator():
     except Exception as exc:
         logger.error(f"Failed to create HTTP client: {exc}")
 
+@app.on_event("startup")
+async def startup_redis():
+    try:
+        await connect_redis(app)
+        logger.info("Redis connected")
+    except Exception as exc:
+        logger.warning("Redis connection skipped during startup: %s", exc)        
+
 # Shutdown hook for external_api_aggregator shared HTTP client
 @app.on_event("shutdown")
 async def shutdown_external_aggregator():
@@ -59,9 +69,18 @@ async def shutdown_external_aggregator():
         except Exception as exc:
             logger.error(f"Error closing HTTP client: {exc}")
 
+@app.on_event("shutdown")
+async def shutdown_redis():
+    try:
+        await close_redis(app)
+        logger.info("Redis closed")
+    except Exception as exc:
+        logger.warning("Redis shutdown warning: %s", exc)            
+
 # Include routers
 app.include_router(system_router)
 app.include_router(items_router)
 app.include_router(ml_router)
 app.include_router(auth_router)
 app.include_router(external_aggregator_router)
+app.include_router(redis_lab_router)
