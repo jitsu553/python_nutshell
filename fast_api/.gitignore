@@ -35,3 +35,4 @@ dist/
 # OS files
 .DS_Store
 Thumbs.db
+uploaded_documents/*

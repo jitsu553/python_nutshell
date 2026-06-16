@@ -15,11 +15,17 @@ from app.external_api_aggregator.config import settings as external_aggregator_s
 from app.external_api_aggregator.router import router as external_aggregator_router
 from app.redis_lab.client import connect_redis, close_redis
 from app.redis_lab.router import router as redis_lab_router
+from app.document_service import models as document_models
+from app.document_service.router import router as document_router
 
 from app.auth import models as auth_models
 from app.db import engine
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 app = FastAPI(title="Python Nutshell FastAPI Demo")
@@ -84,3 +90,4 @@ app.include_router(ml_router)
 app.include_router(auth_router)
 app.include_router(external_aggregator_router)
 app.include_router(redis_lab_router)
+app.include_router(document_router)
