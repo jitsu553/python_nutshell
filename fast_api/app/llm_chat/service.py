@@ -155,17 +155,14 @@ class ChatService:
                         collected += delta
                         yield delta
 
-            write_db = SessionLocal()
-            try:
-                assistant_message = ChatMessage(
-                    session_id=session_id_captured,
-                    role="assistant",
-                    content=collected,
-                    finish_reason=finish_reason,
-                )
-                write_db.add(assistant_message)
-                write_db.commit()
-            finally:
-                write_db.close()
+            # EXPERIMENT: reusing self.db instead of a fresh SessionLocal()
+            assistant_message = ChatMessage(
+                session_id=session_id_captured,
+                role="assistant",
+                content=collected,
+                finish_reason=finish_reason,
+            )
+            self.db.add(assistant_message)
+            self.db.commit()
 
         return token_generator()    
