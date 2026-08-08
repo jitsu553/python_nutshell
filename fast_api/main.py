@@ -17,6 +17,8 @@ from app.redis_lab.client import connect_redis, close_redis
 from app.redis_lab.router import router as redis_lab_router
 from app.document_service import models as document_models
 from app.document_service.router import router as document_router
+from app.llm_chat.client import connect_llm_client, close_llm_client 
+from app.llm_chat.router import router as llm_chat_router
 
 from app.auth import models as auth_models
 from app.db import engine
@@ -61,7 +63,15 @@ async def startup_redis():
         await connect_redis(app)
         logger.info("Redis connected")
     except Exception as exc:
-        logger.warning("Redis connection skipped during startup: %s", exc)        
+        logger.warning("Redis connection skipped during startup: %s", exc)
+
+@app.on_event("startup")
+async def startup_llm_client():
+    try:
+        await connect_llm_client(app)
+        logger.info("LLM Client connected")
+    except Exception as exc:
+        logger.warning("LLM Client connection skipped during startup: %s", exc)
 
 # Shutdown hook for external_api_aggregator shared HTTP client
 @app.on_event("shutdown")
@@ -81,7 +91,15 @@ async def shutdown_redis():
         await close_redis(app)
         logger.info("Redis closed")
     except Exception as exc:
-        logger.warning("Redis shutdown warning: %s", exc)            
+        logger.warning("Redis shutdown warning: %s", exc)  
+
+@app.on_event("shutdown")
+async def shutdown_llm():
+    try:
+        await close_llm_client(app)
+        logger.info("LLM Client closed")
+    except Exception as exc:
+        logger.warning("LLM Client shutdown warning: %s", exc)                   
 
 # Include routers
 app.include_router(system_router)
@@ -91,3 +109,4 @@ app.include_router(auth_router)
 app.include_router(external_aggregator_router)
 app.include_router(redis_lab_router)
 app.include_router(document_router)
+app.include_router(llm_chat_router)
