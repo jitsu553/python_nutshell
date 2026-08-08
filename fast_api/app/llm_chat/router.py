@@ -15,11 +15,14 @@ async def send_prompt(
 ) -> PromptResponse:
     settings = get_llm_settings()
 
+    messages = []
+    if body.system_prompt:
+        messages.append({"role": "system", "content": body.system_prompt})
+    messages.append({"role": "user", "content": body.prompt})
+
     payload = {
         "model": settings.llm_model,
-        "messages": [
-            {"role": "user", "content": body.prompt},
-        ],
+        "messages": messages,
     }
 
     try:
