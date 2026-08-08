@@ -24,6 +24,8 @@ async def send_prompt(
         "model": settings.llm_model,
         "messages": messages,
     }
+    if body.temperature is not None:
+        payload["temperature"] = body.temperature
 
     try:
         response = await client.post("/chat/completions", json=payload)
