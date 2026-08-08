@@ -26,6 +26,8 @@ async def send_prompt(
     }
     if body.temperature is not None:
         payload["temperature"] = body.temperature
+    if body.max_tokens is not None:
+        payload["max_tokens"] = body.max_tokens
 
     try:
         response = await client.post("/chat/completions", json=payload)
@@ -36,6 +38,13 @@ async def send_prompt(
         raise HTTPException(status_code=502, detail=f"Could not reach LLM server: {exc}")
 
     data = response.json()
-    reply = data["choices"][0]["message"]["content"]
+    choice = data["choices"][0]
+    reply = choice["message"]["content"]
+    finish_reason = choice.get("finish_reason")
 
-    return PromptResponse(model=settings.llm_model, prompt=body.prompt, reply=reply)
+    return PromptResponse(
+        model=settings.llm_model,
+        prompt=body.prompt,
+        reply=reply,
+        finish_reason=finish_reason,
+    )
