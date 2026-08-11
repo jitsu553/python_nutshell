@@ -6,7 +6,7 @@ import json
 
 from .config import get_llm_settings
 from .models import ChatMessage, ChatSession
-from .schemas import CreateSessionRequest, PromptRequest
+from .schemas import CreateSessionRequest, PromptRequest, EmbedRequest, EmbedResponse
 from app.db import SessionLocal
 
 
@@ -33,6 +33,37 @@ def build_payload(body: PromptRequest, *, stream: bool = False) -> dict:
         payload["stream"] = True
 
     return payload
+
+async def embed_texts(body: EmbedRequest, client: httpx.AsyncClient) -> EmbedResponse:
+    settings = get_llm_settings()
+
+    texts = body.input if isinstance(body.input, list) else [body.input]
+    if not texts or any(not t.strip() for t in texts):
+        raise HTTPException(status_code=422, detail="input must contain non-empty text")
+
+    payload = {
+        "model": settings.llm_embedding_model,
+        "input": texts,
+    }
+
+    try:
+        response = await client.post("/embeddings", json=payload)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Embedding request failed: {exc.response.text}")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach LLM server: {exc}")
+
+    data = response.json()
+    # print(data)
+    sorted_items = sorted(data["data"], key=lambda item: item["index"])
+    vectors = [item["embedding"] for item in sorted_items]
+
+    return EmbedResponse(
+        model=settings.llm_embedding_model,
+        embeddings=vectors,
+        dimensions=len(vectors[0]) if vectors else 0,
+    )
 
 class ChatService:
     def __init__(self, db: Session, client: httpx.AsyncClient):

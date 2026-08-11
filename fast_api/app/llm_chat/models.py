@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 
 from app.db import Base
 
@@ -40,3 +41,13 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     session = relationship("ChatSession", back_populates="messages")
+
+
+class TextEmbedding(Base):
+    __tablename__ = "text_embeddings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_text = Column(Text, nullable=False)
+    model = Column(String(100), nullable=False)
+    embedding = Column(Vector(768), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)    

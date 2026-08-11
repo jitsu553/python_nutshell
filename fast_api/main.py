@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 
 
-app = FastAPI(title="Python Nutshell FastAPI Demo")
+app = FastAPI(title="Python Nutshell FastAPI Demo", swagger_ui_parameters={"docExpansion": "none"})
 
 print("Starting FastAPI application...")
 
@@ -39,7 +39,7 @@ print("Starting FastAPI application...")
 def on_startup():
     # Keep API docs available even when DB is temporarily unavailable.
     try:
-        auth_models.User.metadata.create_all(bind=engine)
+        # auth_models.User.metadata.create_all(bind=engine)
         init_db()
         pass
     except Exception as exc:

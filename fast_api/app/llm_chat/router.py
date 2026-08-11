@@ -8,11 +8,10 @@ import httpx
 from app.auth.dependencies import get_db
 from .client import get_llm_client
 from .config import get_llm_settings
-from .schemas import PromptRequest, PromptResponse
-from .service import build_payload
 from .models import ChatSession
-from .schemas import CreateSessionRequest, MessageResponse, SendMessageRequest, SessionResponse
-from .service import ChatService
+from .schemas import PromptRequest, PromptResponse, CreateSessionRequest, MessageResponse, SendMessageRequest, SessionResponse, EmbedRequest, EmbedResponse, SimilarityRequest, SimilarityResponse
+from .service import ChatService, build_payload, embed_texts
+from .utils.similarity import cosine_similarity
 
 router = APIRouter(prefix="/llm-chat", tags=["llm-chat"])
 
@@ -108,3 +107,25 @@ def get_chat_messages(
 ):
     service = ChatService(db, client=None)
     return service.list_messages(session_id)
+
+
+@router.post("/embeddings", response_model=EmbedResponse)
+async def create_embeddings(
+    body: EmbedRequest,
+    client: httpx.AsyncClient = Depends(get_llm_client),
+) -> EmbedResponse:
+    return await embed_texts(body, client)
+
+@router.post("/similarity", response_model=SimilarityResponse)
+async def compare_similarity(
+    body: SimilarityRequest,
+    client: httpx.AsyncClient = Depends(get_llm_client),
+) -> SimilarityResponse:
+    result = await embed_texts(EmbedRequest(input=[body.text_a, body.text_b]), client)
+    similarity = cosine_similarity(result.embeddings[0], result.embeddings[1])
+
+    return SimilarityResponse(
+        text_a=body.text_a,
+        text_b=body.text_b,
+        similarity=similarity,
+    )

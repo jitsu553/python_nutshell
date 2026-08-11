@@ -8,6 +8,7 @@ class LLMSettings(BaseSettings):
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"  # Ollama ignores the value but a header is still required
     llm_model: str = "mistral:latest"
+    llm_embedding_model: str = "nomic-embed-text"   # <-- new
     llm_request_timeout_seconds: float = 60.0
 
 

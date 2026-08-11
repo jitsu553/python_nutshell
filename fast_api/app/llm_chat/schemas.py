@@ -40,5 +40,21 @@ class MessageResponse(BaseModel):
     content: str
     finish_reason: str | None
     created_at: datetime
-
     model_config = {"from_attributes": True}
+
+class EmbedRequest(BaseModel):
+    input: str | list[str]
+
+class EmbedResponse(BaseModel):
+    model: str
+    embeddings: list[list[float]]
+    dimensions: int
+
+class SimilarityRequest(BaseModel):
+    text_a: str = Field(min_length=1)
+    text_b: str = Field(min_length=1)
+
+class SimilarityResponse(BaseModel):
+    text_a: str
+    text_b: str
+    similarity: float  

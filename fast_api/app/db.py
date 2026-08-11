@@ -3,7 +3,7 @@
 import os
 from typing import Optional
 
-from sqlalchemy import Column, Float, Integer, String, create_engine
+from sqlalchemy import Column, Float, Integer, String, create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
@@ -37,6 +37,8 @@ class ItemModel(Base):
 
 
 def init_db() -> None:
+	with engine.begin() as conn:
+		conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 	Base.metadata.create_all(bind=engine)
 
 
