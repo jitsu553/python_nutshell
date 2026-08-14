@@ -194,12 +194,20 @@ async def ask_with_rag(
     client: httpx.AsyncClient = Depends(get_llm_client),
 ) -> RagAskResponse:
     embed_result = await embed_texts(EmbedRequest(input=body.question), client)
-    matches = find_similar(db, embed_result.embeddings[0], limit=body.limit, document_id=body.document_id)
+    matches = find_similar(
+        db,
+        embed_result.embeddings[0],
+        limit=body.limit,
+        document_id=body.document_id,
+        min_similarity=body.min_similarity,
+    )
 
     if not matches:
-        raise HTTPException(status_code=404, detail="No indexed content available to answer from")
-
-    print(matches)
+        return RagAskResponse(
+            question=body.question,
+            answer="I don't have enough relevant information to answer that.",
+            sources=[],
+        )
 
     chunks = [row for row, _similarity in matches]
     answer = await answer_with_context(body.question, chunks, client)

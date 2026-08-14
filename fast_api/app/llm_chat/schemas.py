@@ -81,6 +81,7 @@ class RagAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     limit: int = Field(default=5, ge=1, le=20)
     document_id: int | None = None
+    min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class RagSource(BaseModel):

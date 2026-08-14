@@ -100,11 +100,16 @@ def find_similar(
     query_vector: list[float],
     limit: int = 5,
     document_id: int | None = None,
+    min_similarity: float | None = None,
 ) -> list[tuple[TextEmbedding, float]]:
     distance_expr = TextEmbedding.embedding.cosine_distance(query_vector)
     query = db.query(TextEmbedding, distance_expr)
+
     if document_id is not None:
         query = query.filter(TextEmbedding.document_id == document_id)
+    if min_similarity is not None:
+        query = query.filter(distance_expr <= 1 - min_similarity)
+
     rows = query.order_by(distance_expr).limit(limit).all()
     return [(row_embedding, 1 - distance) for row_embedding, distance in rows]
 
