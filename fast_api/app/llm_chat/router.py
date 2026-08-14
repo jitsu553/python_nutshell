@@ -12,9 +12,10 @@ from .models import ChatSession, TextEmbedding
 from .schemas import ( 
     PromptRequest, PromptResponse, CreateSessionRequest, MessageResponse, SendMessageRequest, 
     SessionResponse, EmbedRequest, EmbedResponse, SimilarityRequest, SimilarityResponse,
-    IngestResponse, SearchRequest, SearchResponse, SearchResult 
+    IngestResponse, SearchRequest, SearchResponse, SearchResult,
+    RagAskRequest, RagAskResponse, RagSource
     )
-from .service import ChatService, build_payload, embed_texts, find_similar, store_embedding, index_document_chunks
+from .service import ChatService, build_payload, embed_texts, find_similar, store_embedding, index_document_chunks, find_similar, answer_with_context
 from .utils.similarity import cosine_similarity
 from app.auth.models import User
 
@@ -185,3 +186,29 @@ async def index_document_for_search(
 ):
     rows = await index_document_chunks(db, document_id, current_user, client)
     return {"document_id": document_id, "chunks_indexed": len(rows)}
+
+@router.post("/ask", response_model=RagAskResponse)
+async def ask_with_rag(
+    body: RagAskRequest,
+    db: Session = Depends(get_db),
+    client: httpx.AsyncClient = Depends(get_llm_client),
+) -> RagAskResponse:
+    embed_result = await embed_texts(EmbedRequest(input=body.question), client)
+    matches = find_similar(db, embed_result.embeddings[0], limit=body.limit, document_id=body.document_id)
+
+    if not matches:
+        raise HTTPException(status_code=404, detail="No indexed content available to answer from")
+
+    print(matches)
+
+    chunks = [row for row, _similarity in matches]
+    answer = await answer_with_context(body.question, chunks, client)
+
+    return RagAskResponse(
+        question=body.question,
+        answer=answer,
+        sources=[
+            RagSource(document_id=row.document_id, chunk_index=row.chunk_index, similarity=similarity, text=row.source_text)
+            for row, similarity in matches
+        ],
+    )

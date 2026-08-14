@@ -77,3 +77,21 @@ class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult]
 
+class RagAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=20)
+    document_id: int | None = None
+
+
+class RagSource(BaseModel):
+    document_id: int | None
+    chunk_index: int | None
+    similarity: float
+    text: str
+
+
+class RagAskResponse(BaseModel):
+    question: str
+    answer: str
+    sources: list[RagSource]    
+
