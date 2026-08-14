@@ -5,13 +5,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import httpx
 
-from app.auth.dependencies import get_db
+from app.auth.dependencies import get_db,get_current_user
 from .client import get_llm_client
 from .config import get_llm_settings
-from .models import ChatSession
-from .schemas import PromptRequest, PromptResponse, CreateSessionRequest, MessageResponse, SendMessageRequest, SessionResponse, EmbedRequest, EmbedResponse, SimilarityRequest, SimilarityResponse
-from .service import ChatService, build_payload, embed_texts
+from .models import ChatSession, TextEmbedding
+from .schemas import ( 
+    PromptRequest, PromptResponse, CreateSessionRequest, MessageResponse, SendMessageRequest, 
+    SessionResponse, EmbedRequest, EmbedResponse, SimilarityRequest, SimilarityResponse,
+    IngestResponse, SearchRequest, SearchResponse, SearchResult 
+    )
+from .service import ChatService, build_payload, embed_texts, find_similar, store_embedding, index_document_chunks
 from .utils.similarity import cosine_similarity
+from app.auth.models import User
+
 
 router = APIRouter(prefix="/llm-chat", tags=["llm-chat"])
 
@@ -129,3 +135,53 @@ async def compare_similarity(
         text_b=body.text_b,
         similarity=similarity,
     )
+
+@router.post("/store", response_model=IngestResponse)
+async def ingest_texts(
+    body: EmbedRequest,
+    db: Session = Depends(get_db),
+    client: httpx.AsyncClient = Depends(get_llm_client),
+) -> IngestResponse:
+    embed_result = await embed_texts(body, client)
+    # print(embed_result)
+    texts = body.input if isinstance(body.input, list) else [body.input]
+
+    stored_ids = [
+        store_embedding(db, text, vector, embed_result.model).id
+        for text, vector in zip(texts, embed_result.embeddings)
+    ]
+    return IngestResponse(stored_ids=stored_ids)
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_texts(
+    body: SearchRequest,
+    db: Session = Depends(get_db),
+    client: httpx.AsyncClient = Depends(get_llm_client),
+) -> SearchResponse:
+    embed_result = await embed_texts(EmbedRequest(input=body.query), client)
+    matches = find_similar(db, embed_result.embeddings[0], limit=body.limit)
+
+    return SearchResponse(
+        query=body.query,
+        results=[
+            SearchResult(
+                id=row.id,
+                text=row.source_text,
+                similarity=similarity,
+                document_id=row.document_id,
+                chunk_index=row.chunk_index,
+            )
+            for row, similarity in matches
+        ],
+    )
+
+@router.post("/documents/{document_id}/index")
+async def index_document_for_search(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    client: httpx.AsyncClient = Depends(get_llm_client),
+):
+    rows = await index_document_chunks(db, document_id, current_user, client)
+    return {"document_id": document_id, "chunks_indexed": len(rows)}

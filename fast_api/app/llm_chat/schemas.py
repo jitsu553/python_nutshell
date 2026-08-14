@@ -57,4 +57,23 @@ class SimilarityRequest(BaseModel):
 class SimilarityResponse(BaseModel):
     text_a: str
     text_b: str
-    similarity: float  
+    similarity: float 
+
+class IngestResponse(BaseModel):
+    stored_ids: list[int]
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    limit: int = Field(default=5, ge=1, le=50)
+
+class SearchResult(BaseModel):
+    id: int
+    text: str
+    similarity: float
+    document_id: int | None = None
+    chunk_index: int | None = None
+
+class SearchResponse(BaseModel):
+    query: str
+    results: list[SearchResult]
+

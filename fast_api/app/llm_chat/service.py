@@ -5,9 +5,13 @@ import httpx
 import json
 
 from .config import get_llm_settings
-from .models import ChatMessage, ChatSession
+from .models import ChatMessage, ChatSession, TextEmbedding
 from .schemas import CreateSessionRequest, PromptRequest, EmbedRequest, EmbedResponse
 from app.db import SessionLocal
+from app.document_service.service import DocumentService
+from app.document_service.storage import LocalDocumentStorage
+from app.auth.models import User
+from .utils.chunking import chunk_text
 
 
 def build_messages(body: PromptRequest) -> list[dict]:
@@ -64,6 +68,59 @@ async def embed_texts(body: EmbedRequest, client: httpx.AsyncClient) -> EmbedRes
         embeddings=vectors,
         dimensions=len(vectors[0]) if vectors else 0,
     )
+
+def store_embedding(
+    db: Session,
+    text: str,
+    vector: list[float],
+    model: str,
+    document_id: int | None = None,
+    chunk_index: int | None = None,
+) -> TextEmbedding:
+    row = TextEmbedding(
+        source_text=text,
+        model=model,
+        embedding=vector,
+        document_id=document_id,
+        chunk_index=chunk_index,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def find_similar(db: Session, query_vector: list[float], limit: int = 5) -> list[tuple[TextEmbedding, float]]:
+    distance_expr = TextEmbedding.embedding.cosine_distance(query_vector)
+    # print(distance_expr)
+    rows = (
+        db.query(TextEmbedding, distance_expr)
+        .order_by(distance_expr)
+        .limit(limit)
+        .all()
+    )
+    # print(rows)
+    return [(row_embedding, 1 - distance) for row_embedding, distance in rows]
+
+async def index_document_chunks(
+    db: Session,
+    document_id: int,
+    current_user: User,
+    client: httpx.AsyncClient,
+) -> list[TextEmbedding]:
+    doc_service = DocumentService(db=db, storage=LocalDocumentStorage())
+    document, text, _source = doc_service.get_or_index_text(document_id, current_user)
+
+    chunks = chunk_text(text)
+    if not chunks:
+        return []
+
+    embed_result = await embed_texts(EmbedRequest(input=chunks), client)
+
+    return [
+        store_embedding(db, chunk, vector, embed_result.model, document_id=document.id, chunk_index=index)
+        for index, (chunk, vector) in enumerate(zip(chunks, embed_result.embeddings))
+    ]
 
 class ChatService:
     def __init__(self, db: Session, client: httpx.AsyncClient):

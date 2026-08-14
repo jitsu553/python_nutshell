@@ -47,7 +47,10 @@ class TextEmbedding(Base):
     __tablename__ = "text_embeddings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True)
+    chunk_index = Column(Integer, nullable=True)
     source_text = Column(Text, nullable=False)
     model = Column(String(100), nullable=False)
     embedding = Column(Vector(768), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+  
