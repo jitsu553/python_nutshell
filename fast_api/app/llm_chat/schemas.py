@@ -18,6 +18,8 @@ class CreateSessionRequest(BaseModel):
     system_prompt: str | None = Field(default=None, max_length=2000)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
+    use_rag: bool = False
+    rag_document_id: int | None = None
 
 class SessionResponse(BaseModel):
     id: int
@@ -25,6 +27,8 @@ class SessionResponse(BaseModel):
     system_prompt: str | None
     temperature: float | None
     max_tokens: int | None
+    use_rag: bool
+    rag_document_id: int | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

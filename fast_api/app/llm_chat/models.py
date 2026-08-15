@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, Boolean
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
@@ -15,6 +15,8 @@ class ChatSession(Base):
     system_prompt = Column(String(2000), nullable=True)
     temperature = Column(Float, nullable=True)
     max_tokens = Column(Integer, nullable=True)
+    use_rag = Column(Boolean, nullable=False, default=False)
+    rag_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     messages = relationship(

@@ -159,6 +159,28 @@ async def answer_with_context(question: str, chunks: list[TextEmbedding], client
     data = response.json()
     return data["choices"][0]["message"]["content"]
 
+async def build_session_messages(self, session: ChatSession, content: str) -> list[dict]:
+    messages = []
+    if session.system_prompt:
+        messages.append({"role": "system", "content": session.system_prompt})
+
+    if session.use_rag:
+        embed_result = await embed_texts(EmbedRequest(input=content), self.client)
+        matches = find_similar(
+            self.db,
+            embed_result.embeddings[0],
+            limit=5,
+            document_id=session.rag_document_id,
+            min_similarity=0.5,
+        )
+        if matches:
+            context = build_rag_context([row for row, _similarity in matches])
+            messages.append({"role": "system", "content": f"{RAG_SYSTEM_PROMPT}\n\nContext:\n{context}"})
+
+    history = [{"role": m.role, "content": m.content} for m in session.messages]
+    messages.extend(history)
+    return messages    
+
 class ChatService:
     def __init__(self, db: Session, client: httpx.AsyncClient):
         self.db = db
@@ -170,6 +192,8 @@ class ChatService:
             system_prompt=body.system_prompt,
             temperature=body.temperature,
             max_tokens=body.max_tokens,
+            use_rag=body.use_rag,
+            rag_document_id=body.rag_document_id,
         )
         self.db.add(session)
         self.db.commit()
@@ -196,10 +220,7 @@ class ChatService:
 
         history = [{"role": m.role, "content": m.content} for m in session.messages]
 
-        messages = []
-        if session.system_prompt:
-            messages.append({"role": "system", "content": session.system_prompt})
-        messages.extend(history)
+        messages = await self.build_session_messages(session, content)
 
         payload = {
             "model": settings.llm_model,
@@ -240,12 +261,7 @@ class ChatService:
         self.db.add(user_message)
         self.db.commit()
 
-        history = [{"role": m.role, "content": m.content} for m in session.messages]
-
-        messages = []
-        if session.system_prompt:
-            messages.append({"role": "system", "content": session.system_prompt})
-        messages.extend(history)
+        messages = await self.build_session_messages(session, content)
 
         payload = {
             "model": settings.llm_model,
