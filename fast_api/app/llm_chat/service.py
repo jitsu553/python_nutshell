@@ -27,6 +27,36 @@ SUMMARY_SYSTEM_PROMPT = (
 # MAX_CONTEXT_TOKENS = 2048        # matches Ollama's default num_ctx for mistral
 # RESERVED_FOR_REPLY = 512         # leave room for the model's answer
 
+def format_sse(data: dict, event: str | None = None) -> str:
+    frame = f"event: {event}\n" if event else ""
+    return f"{frame}data: {json.dumps(data)}\n\n"
+
+
+async def stream_chat_completion(client: httpx.AsyncClient, payload: dict):
+    """Parse Ollama's OpenAI-compatible SSE stream into (kind, value) pairs:
+    ("delta", str), ("finish_reason", str), or ("error", str)."""
+    async with client.stream("POST", "/chat/completions", json=payload) as response:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = await exc.response.aread()
+            yield "error", detail.decode()
+            return
+
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line.removeprefix("data: ").strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            choice = chunk["choices"][0]
+            delta = choice["delta"].get("content")
+            if delta:
+                yield "delta", delta
+            if choice.get("finish_reason"):
+                yield "finish_reason", choice["finish_reason"]
+
 
 def build_messages(body: PromptRequest) -> list[dict]:
     messages = []
@@ -387,28 +417,20 @@ class ChatService:
 
         session_id_captured = session.id
 
-        async def token_generator():
+        async def event_generator():
             collected = ""
             finish_reason = None
 
-            async with self.client.stream("POST", "/chat/completions", json=payload) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data = line.removeprefix("data: ").strip()
-                    if data == "[DONE]":
-                        break
-                    chunk = json.loads(data)
-                    choice = chunk["choices"][0]
-                    delta = choice["delta"].get("content")
-                    if choice.get("finish_reason"):
-                        finish_reason = choice["finish_reason"]
-                    if delta:
-                        collected += delta
-                        yield delta
+            async for kind, value in stream_chat_completion(self.client, payload):
+                if kind == "delta":
+                    collected += value
+                    yield format_sse({"delta": value})
+                elif kind == "finish_reason":
+                    finish_reason = value
+                elif kind == "error":
+                    yield format_sse({"detail": value}, event="stream_error")
+                    return
 
-            # EXPERIMENT: reusing self.db instead of a fresh SessionLocal()
             assistant_message = ChatMessage(
                 session_id=session_id_captured,
                 role="assistant",
@@ -417,5 +439,8 @@ class ChatService:
             )
             self.db.add(assistant_message)
             self.db.commit()
+            self.db.refresh(assistant_message)
 
-        return token_generator()    
+            yield format_sse({"message_id": assistant_message.id, "finish_reason": finish_reason}, event="done")
+
+        return event_generator()

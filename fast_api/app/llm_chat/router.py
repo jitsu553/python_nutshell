@@ -15,7 +15,11 @@ from .schemas import (
     IngestResponse, SearchRequest, SearchResponse, SearchResult,
     RagAskRequest, RagAskResponse, RagSource
     )
-from .service import ChatService, build_payload, embed_texts, find_similar, store_embedding, index_document_chunks, find_similar, answer_with_context
+from .service import (
+    ChatService, build_payload, embed_texts, find_similar, 
+    store_embedding, index_document_chunks, answer_with_context,
+    stream_chat_completion, format_sse,
+)
 from .utils.similarity import cosine_similarity
 from app.auth.models import User
 
@@ -59,28 +63,16 @@ async def send_prompt_stream(
 ) -> StreamingResponse:
     payload = build_payload(body, stream=True)
 
-    async def token_generator():
-        async with client.stream("POST", "/chat/completions", json=payload) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                detail = await exc.response.aread()
-                raise HTTPException(status_code=502, detail=f"LLM request failed: {detail.decode()}")
+    async def event_generator():
+        async for kind, value in stream_chat_completion(client, payload):
+            if kind == "delta":
+                yield format_sse({"delta": value})
+            elif kind == "error":
+                yield format_sse({"detail": value}, event="stream_error")
+                return
+        yield format_sse({}, event="done")
 
-            async for line in response.aiter_lines():
-                print(line)
-                # yield line + "\n"
-                if not line.startswith("data: "):
-                    continue
-                data = line.removeprefix("data: ").strip()
-                if data == "[DONE]":
-                    break
-                chunk = json.loads(data)
-                delta = chunk["choices"][0]["delta"].get("content")
-                if delta:
-                    yield delta
-
-    return StreamingResponse(token_generator(), media_type="text/plain")
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/sessions", response_model=SessionResponse)
 def create_chat_session(
@@ -102,7 +94,7 @@ async def send_chat_message(
 
     if body.stream is True:
         generator = await service.send_message_stream(session_id, body.content)
-        return StreamingResponse(generator, media_type="text/plain")
+        return StreamingResponse(generator, media_type="text/event-stream")
 
     return await service.send_message(session_id, body.content)
 
