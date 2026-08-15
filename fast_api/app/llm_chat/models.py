@@ -18,6 +18,8 @@ class ChatSession(Base):
     use_rag = Column(Boolean, nullable=False, default=False)
     rag_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    summary = Column(Text, nullable=True)                              # <-- new
+    summarized_through_message_id = Column(Integer, nullable=True)     # <-- new
 
     messages = relationship(
         "ChatMessage",
