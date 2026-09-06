@@ -56,7 +56,9 @@ def call_ollama(messages):
         timeout=60.0,
     )
     response.raise_for_status()
-    return response.json()["choices"][0]["message"]
+    response_data = response.json()
+    print(json.dumps(response_data,indent=2))
+    return response_data["choices"][0]["message"]
 
 
 messages = [{
@@ -72,6 +74,7 @@ while True:
         break
 
     messages.append(message)
+    
 
     for call in message["tool_calls"]:
         name = call["function"]["name"]
