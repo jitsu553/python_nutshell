@@ -13,60 +13,75 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "A math expression, e.g. '25 * 18' or '(3 + 4) / 2'",
-                    }
+                    "expression": {"type": "string", "description": "e.g. '25 * 18'"}
                 },
                 "required": ["expression"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "word_count",
+            "description": "Count the number of words in a piece of text.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "The text to count words in"}
+                },
+                "required": ["text"],
+            },
+        },
+    },
 ]
 
 
 def calculate(expression: str) -> str:
-    # ponytail: eval() on arbitrary text is a real injection risk outside a throwaway script —
-    # a safe expression evaluator is the fix when this leaves scratch_tools.py
-    result = eval(expression)
-    return str(result)
+    # ponytail: eval() on arbitrary text is a real injection risk outside a throwaway script
+    return str(eval(expression))
 
 
-messages = [{"role": "user", "content": "What is 25 * 18?"}]
+def word_count(text: str) -> str:
+    return str(len(text.split()))
 
-response = httpx.post(
-    OLLAMA_URL,
-    json={"model": MODEL, "messages": messages, "tools": tools},
-    headers={"Authorization": "Bearer ollama"},
-    timeout=60.0,
-)
-response.raise_for_status()
-data = response.json()
-print(json.dumps(data, indent=2))
-message = data["choices"][0]["message"]
 
-if message.get("tool_calls"):
-    messages.append(message)  # the assistant's tool-call turn goes into history too
+TOOL_FUNCTIONS = {"calculate": calculate, "word_count": word_count}
+
+
+def call_ollama(messages):
+    response = httpx.post(
+        OLLAMA_URL,
+        json={"model": MODEL, "messages": messages, "tools": tools},
+        headers={"Authorization": "Bearer ollama"},
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]
+
+
+messages = [{
+    "role": "user",
+    "content": "What is 25 * 18? Also, how many words are in the sentence 'the quick brown fox jumps'?",
+}]
+
+while True:
+    message = call_ollama(messages)
+
+    if not message.get("tool_calls"):
+        print(message["content"])
+        break
+
+    messages.append(message)
 
     for call in message["tool_calls"]:
+        name = call["function"]["name"]
         args = json.loads(call["function"]["arguments"])
-        result = calculate(**args)
+        print(f"  -> model called {name}({args})")
+
+        result = TOOL_FUNCTIONS[name](**args)
 
         messages.append({
             "role": "tool",
             "tool_call_id": call["id"],
             "content": result,
         })
-
-    print(json.dumps(messages,indent=2))
-    second_response = httpx.post(
-        OLLAMA_URL,
-        json={"model": MODEL, "messages": messages, "tools": tools},
-        headers={"Authorization": "Bearer ollama"},
-        timeout=60.0,
-    )
-    second_response.raise_for_status()
-    final_message = second_response.json()["choices"][0]["message"]
-    print(final_message["content"])
-else:
-    print(message["content"])
