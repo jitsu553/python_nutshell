@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, Boolean
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, Boolean, JSON
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
@@ -20,6 +20,7 @@ class ChatSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     summary = Column(Text, nullable=True)                              # <-- new
     summarized_through_message_id = Column(Integer, nullable=True)     # <-- new
+    use_tools = Column(Boolean, nullable=False, default=False)
 
     messages = relationship(
         "ChatMessage",
@@ -43,6 +44,8 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     finish_reason = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    tool_calls = Column(JSON, nullable=True)
+    tool_call_id = Column(String(64), nullable=True)
 
     session = relationship("ChatSession", back_populates="messages")
 

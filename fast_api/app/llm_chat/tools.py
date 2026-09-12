@@ -2,7 +2,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .schemas import EmbedRequest
-from .service import embed_texts, find_similar
+# from .service import embed_texts, find_similar
 
 TOOLS = [
     {
@@ -43,6 +43,7 @@ async def calculate(expression: str) -> str:
 
 
 async def search_documents(query: str, db: Session, client: httpx.AsyncClient) -> str:
+    from .service import embed_texts, find_similar
     embed_result = await embed_texts(EmbedRequest(input=query), client)
     matches = find_similar(db, embed_result.embeddings[0], limit=3, min_similarity=0.5)
 

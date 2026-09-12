@@ -12,6 +12,7 @@ from app.document_service.service import DocumentService
 from app.document_service.storage import LocalDocumentStorage
 from app.auth.models import User
 from .utils.chunking import chunk_text
+from .tools import TOOLS, TOOL_FUNCTIONS
 
 RAG_SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions using ONLY the reference material "
@@ -26,6 +27,7 @@ SUMMARY_SYSTEM_PROMPT = (
 
 # MAX_CONTEXT_TOKENS = 2048        # matches Ollama's default num_ctx for mistral
 # RESERVED_FOR_REPLY = 512         # leave room for the model's answer
+MAX_TOOL_ITERATIONS = 5
 
 def format_sse(data: dict, event: str | None = None) -> str:
     frame = f"event: {event}\n" if event else ""
@@ -274,6 +276,15 @@ async def maybe_compact_history(
     db.commit()
 
 
+def message_to_wire(message: ChatMessage) -> dict:
+    wire = {"role": message.role, "content": message.content}
+    if message.tool_calls:
+        wire["tool_calls"] = message.tool_calls
+    if message.tool_call_id:
+        wire["tool_call_id"] = message.tool_call_id
+    return wire
+
+
 class ChatService:
     def __init__(self, db: Session, client: httpx.AsyncClient):
         self.db = db
@@ -286,6 +297,7 @@ class ChatService:
             temperature=body.temperature,
             max_tokens=body.max_tokens,
             use_rag=body.use_rag,
+            use_tools=body.use_tools,
             rag_document_id=body.rag_document_id,
         )
         self.db.add(session)
@@ -342,7 +354,7 @@ class ChatService:
         else:
             recent = list(session.messages)        
 
-        history = [{"role": m.role, "content": m.content} for m in recent]
+        history = [message_to_wire(m) for m in recent]
 
         non_history_tokens = sum(count_tokens_approx(m["content"]) for m in messages)
         history_budget = settings.llm_max_context_tokens - settings.llm_reserved_reply_tokens - non_history_tokens
@@ -360,41 +372,64 @@ class ChatService:
         self.db.add(user_message)
         self.db.commit()
 
-        history = [{"role": m.role, "content": m.content} for m in session.messages]
-
         messages = await self.build_session_messages(session, content)
 
-        payload = {
-            "model": settings.llm_model,
-            "messages": messages,
-        }
-        if session.temperature is not None:
-            payload["temperature"] = session.temperature
-        if session.max_tokens is not None:
-            payload["max_tokens"] = session.max_tokens
+        for _ in range(MAX_TOOL_ITERATIONS):
+            payload = {"model": settings.llm_model, "messages": messages}
+            if session.temperature is not None:
+                payload["temperature"] = session.temperature
+            if session.max_tokens is not None:
+                payload["max_tokens"] = session.max_tokens
+            if session.use_tools:
+                payload["tools"] = TOOLS
 
-        try:
-            response = await self.client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=502, detail=f"LLM request failed: {exc.response.text}")
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Could not reach LLM server: {exc}")
+            try:
+                response = await self.client.post("/chat/completions", json=payload)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise HTTPException(status_code=502, detail=f"LLM request failed: {exc.response.text}")
+            except httpx.RequestError as exc:
+                raise HTTPException(status_code=502, detail=f"Could not reach LLM server: {exc}")
 
-        data = response.json()
-        choice = data["choices"][0]
+            message = response.json()["choices"][0]["message"]
 
-        assistant_message = ChatMessage(
-            session_id=session.id,
-            role="assistant",
-            content=choice["message"]["content"],
-            finish_reason=choice.get("finish_reason"),
-        )
-        self.db.add(assistant_message)
-        self.db.commit()
-        self.db.refresh(assistant_message)
-        return assistant_message
+            if not message.get("tool_calls"):
+                assistant_message = ChatMessage(
+                    session_id=session.id,
+                    role="assistant",
+                    content=message["content"],
+                    finish_reason=response.json()["choices"][0].get("finish_reason"),
+                )
+                self.db.add(assistant_message)
+                self.db.commit()
+                self.db.refresh(assistant_message)
+                return assistant_message
 
+            assistant_message = ChatMessage(
+                session_id=session.id,
+                role="assistant",
+                content=message.get("content") or "",
+                tool_calls=message["tool_calls"],
+            )
+            self.db.add(assistant_message)
+            self.db.commit()
+            messages.append(message)
+
+            for call in message["tool_calls"]:
+                name = call["function"]["name"]
+                args = json.loads(call["function"]["arguments"])
+                fn = TOOL_FUNCTIONS[name]
+                kwargs = {"db": self.db, "client": self.client} if name == "search_documents" else {}
+                result = await fn(**args, **kwargs)
+
+                self.db.add(ChatMessage(
+                    session_id=session.id, role="tool", content=result, tool_call_id=call["id"],
+                ))
+                self.db.commit()
+                messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+
+        raise HTTPException(status_code=502, detail="Tool-calling loop exceeded max iterations")
+    
     async def send_message_stream(self, session_id: int, content: str):
         session = self.get_session_or_404(session_id)
         settings = get_llm_settings()

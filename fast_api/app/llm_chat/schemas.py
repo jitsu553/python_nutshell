@@ -20,6 +20,7 @@ class CreateSessionRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     use_rag: bool = False
     rag_document_id: int | None = None
+    use_tools: bool = False
 
 class SessionResponse(BaseModel):
     id: int
@@ -30,6 +31,7 @@ class SessionResponse(BaseModel):
     use_rag: bool
     rag_document_id: int | None
     created_at: datetime
+    use_tools: bool
 
     model_config = {"from_attributes": True}
 
