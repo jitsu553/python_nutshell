@@ -36,7 +36,7 @@ def format_sse(data: dict, event: str | None = None) -> str:
 
 async def stream_chat_completion(client: httpx.AsyncClient, payload: dict):
     """Parse Ollama's OpenAI-compatible SSE stream into (kind, value) pairs:
-    ("delta", str), ("finish_reason", str), or ("error", str)."""
+    ("delta", str), ("tool_call_delta", list[dict]), ("finish_reason", str), or ("error", str)."""
     async with client.stream("POST", "/chat/completions", json=payload) as response:
         try:
             response.raise_for_status()
@@ -52,13 +52,15 @@ async def stream_chat_completion(client: httpx.AsyncClient, payload: dict):
             if data == "[DONE]":
                 break
             chunk = json.loads(data)
+            # print(chunk)
             choice = chunk["choices"][0]
-            delta = choice["delta"].get("content")
-            if delta:
-                yield "delta", delta
+            delta = choice["delta"]
+            if delta.get("content"):
+                yield "delta", delta["content"]
+            if delta.get("tool_calls"):
+                yield "tool_call_delta", delta["tool_calls"]
             if choice.get("finish_reason"):
                 yield "finish_reason", choice["finish_reason"]
-
 
 def build_messages(body: PromptRequest) -> list[dict]:
     messages = []
@@ -66,6 +68,18 @@ def build_messages(body: PromptRequest) -> list[dict]:
         messages.append({"role": "system", "content": body.system_prompt})
     messages.append({"role": "user", "content": body.prompt})
     return messages
+
+def merge_tool_call_deltas(accumulated: dict[int, dict], fragments: list[dict]) -> None:
+    # print(fragments,accumulated)
+    for frag in fragments:
+        entry = accumulated.setdefault(frag["index"], {"id": "", "function": {"name": "", "arguments": ""}})
+        if frag.get("id"):
+            entry["id"] = frag["id"]
+        fn = frag.get("function", {})
+        if fn.get("name"):
+            entry["function"]["name"] += fn["name"]
+        if fn.get("arguments"):
+            entry["function"]["arguments"] += fn["arguments"]
 
 
 def build_payload(body: PromptRequest, *, stream: bool = False) -> dict:
@@ -439,43 +453,71 @@ class ChatService:
         self.db.commit()
 
         messages = await self.build_session_messages(session, content)
-
-        payload = {
-            "model": settings.llm_model,
-            "messages": messages,
-            "stream": True,
-        }
-        if session.temperature is not None:
-            payload["temperature"] = session.temperature
-        if session.max_tokens is not None:
-            payload["max_tokens"] = session.max_tokens
-
         session_id_captured = session.id
 
         async def event_generator():
-            collected = ""
-            finish_reason = None
+            for _ in range(MAX_TOOL_ITERATIONS):
+                payload = {"model": settings.llm_model, "messages": messages, "stream": True}
+                if session.temperature is not None:
+                    payload["temperature"] = session.temperature
+                if session.max_tokens is not None:
+                    payload["max_tokens"] = session.max_tokens
+                if session.use_tools:
+                    payload["tools"] = TOOLS
 
-            async for kind, value in stream_chat_completion(self.client, payload):
-                if kind == "delta":
-                    collected += value
-                    yield format_sse({"delta": value})
-                elif kind == "finish_reason":
-                    finish_reason = value
-                elif kind == "error":
-                    yield format_sse({"detail": value}, event="stream_error")
+                collected = ""
+                finish_reason = None
+                tool_call_fragments: dict[int, dict] = {}
+
+                async for kind, value in stream_chat_completion(self.client, payload):
+                    if kind == "delta":
+                        collected += value
+                        yield format_sse({"delta": value})
+                    elif kind == "tool_call_delta":
+                        merge_tool_call_deltas(tool_call_fragments, value)
+                    elif kind == "finish_reason":
+                        finish_reason = value
+                    elif kind == "error":
+                        yield format_sse({"detail": value}, event="stream_error")
+                        return
+
+                if not tool_call_fragments:
+                    assistant_message = ChatMessage(
+                        session_id=session_id_captured, role="assistant",
+                        content=collected, finish_reason=finish_reason,
+                    )
+                    self.db.add(assistant_message)
+                    self.db.commit()
+                    self.db.refresh(assistant_message)
+                    yield format_sse({"message_id": assistant_message.id, "finish_reason": finish_reason}, event="done")
                     return
 
-            assistant_message = ChatMessage(
-                session_id=session_id_captured,
-                role="assistant",
-                content=collected,
-                finish_reason=finish_reason,
-            )
-            self.db.add(assistant_message)
-            self.db.commit()
-            self.db.refresh(assistant_message)
+                tool_calls = [
+                    {"id": entry["id"], "type": "function", "function": entry["function"]}
+                    for _, entry in sorted(tool_call_fragments.items())
+                ]
 
-            yield format_sse({"message_id": assistant_message.id, "finish_reason": finish_reason}, event="done")
+                self.db.add(ChatMessage(
+                    session_id=session_id_captured, role="assistant", content=collected, tool_calls=tool_calls,
+                ))
+                self.db.commit()
+                messages.append({"role": "assistant", "content": collected, "tool_calls": tool_calls})
+
+                for call in tool_calls:
+                    name = call["function"]["name"]
+                    args = json.loads(call["function"]["arguments"])
+                    yield format_sse({"tool": name, "arguments": args}, event="tool_call")
+
+                    fn = TOOL_FUNCTIONS[name]
+                    kwargs = {"db": self.db, "client": self.client} if name == "search_documents" else {}
+                    result = await fn(**args, **kwargs)
+
+                    self.db.add(ChatMessage(
+                        session_id=session_id_captured, role="tool", content=result, tool_call_id=call["id"],
+                    ))
+                    self.db.commit()
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+
+            yield format_sse({"detail": "Tool-calling loop exceeded max iterations"}, event="stream_error")
 
         return event_generator()
