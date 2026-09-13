@@ -51,5 +51,6 @@ async def run_agent_loop(messages: list[dict]) -> None:
 
 
 if __name__ == "__main__":
-    messages = [{"role": "user", "content": "What is 25 * 18, and what does our leave policy say about sick leave?"}]
+    # messages = [{"role": "user", "content": "What is 25 * 18, and what does our leave policy say about sick leave?"}]
+    messages = [{"role": "user", "content": "What is 25 * 18, and can you search the web for AWS Lambda's monthly free-tier request limit?"}]
     asyncio.run(run_agent_loop(messages))

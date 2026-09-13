@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from .schemas import EmbedRequest
 # from .service import embed_texts, find_similar
+from .utils.web_search import get_search_engine
 
 _OPS = {
     ast.Add: operator.add,
@@ -44,6 +45,22 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the public web for current information. Use this for anything "
+                "outside your training data or the user's own documents — current events, "
+                "prices, external specs, public policies, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "What to search for"}},
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -68,7 +85,7 @@ async def calculate(expression: str) -> str:
 async def search_documents(query: str, db: Session, client: httpx.AsyncClient) -> str:
     from .service import embed_texts, find_similar
     embed_result = await embed_texts(EmbedRequest(input=query), client)
-    matches = find_similar(db, embed_result.embeddings[0], limit=3, min_similarity=0.5)
+    matches = find_similar(db, embed_result.embeddings[0], limit=3, min_similarity=0.65)
 
     if not matches:
         return "No relevant documents found."
@@ -77,5 +94,19 @@ async def search_documents(query: str, db: Session, client: httpx.AsyncClient) -
         f"[{i + 1}] {row.source_text}" for i, (row, _similarity) in enumerate(matches)
     )
 
+async def web_search(query: str) -> str:
+    engine = get_search_engine()
+    try:
+        results = await engine.search(query)
+    except Exception as e:
+        return f"Error performing web search: {e}"
 
-TOOL_FUNCTIONS = {"calculate": calculate, "search_documents": search_documents}
+    if not results:
+        return "No web results found."
+
+    return "\n\n".join(
+        f"[{i + 1}] {r.title} ({r.url})\n{r.snippet}" for i, r in enumerate(results)
+    )
+
+
+TOOL_FUNCTIONS = {"calculate": calculate, "search_documents": search_documents, "web_search": web_search}
