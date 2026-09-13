@@ -289,6 +289,8 @@ async def maybe_compact_history(
     session.summarized_through_message_id = to_summarize[-1].id
     db.commit()
 
+def tool_kwargs(name: str, db, client: httpx.AsyncClient) -> dict:
+    return {"db": db, "client": client} if name == "search_documents" else {}
 
 def message_to_wire(message: ChatMessage) -> dict:
     wire = {"role": message.role, "content": message.content}
@@ -431,10 +433,12 @@ class ChatService:
 
             for call in message["tool_calls"]:
                 name = call["function"]["name"]
-                args = json.loads(call["function"]["arguments"])
-                fn = TOOL_FUNCTIONS[name]
-                kwargs = {"db": self.db, "client": self.client} if name == "search_documents" else {}
-                result = await fn(**args, **kwargs)
+                try:
+                    fn = TOOL_FUNCTIONS[name]
+                    args = json.loads(call["function"]["arguments"])
+                    result = await fn(**args, **tool_kwargs(name, self.db, self.client))
+                except Exception as e:
+                    result = f"Error: tool '{name}' failed: {e}"
 
                 self.db.add(ChatMessage(
                     session_id=session.id, role="tool", content=result, tool_call_id=call["id"],
@@ -505,12 +509,13 @@ class ChatService:
 
                 for call in tool_calls:
                     name = call["function"]["name"]
-                    args = json.loads(call["function"]["arguments"])
-                    yield format_sse({"tool": name, "arguments": args}, event="tool_call")
-
-                    fn = TOOL_FUNCTIONS[name]
-                    kwargs = {"db": self.db, "client": self.client} if name == "search_documents" else {}
-                    result = await fn(**args, **kwargs)
+                    try:
+                        fn = TOOL_FUNCTIONS[name]
+                        args = json.loads(call["function"]["arguments"])
+                        yield format_sse({"tool": name, "arguments": args}, event="tool_call")
+                        result = await fn(**args, **tool_kwargs(name, self.db, self.client))
+                    except Exception as e:
+                        result = f"Error: tool '{name}' failed: {e}"
 
                     self.db.add(ChatMessage(
                         session_id=session_id_captured, role="tool", content=result, tool_call_id=call["id"],

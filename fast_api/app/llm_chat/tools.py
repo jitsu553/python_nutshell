@@ -1,8 +1,19 @@
+import ast
+import operator
 import httpx
 from sqlalchemy.orm import Session
 
 from .schemas import EmbedRequest
 # from .service import embed_texts, find_similar
+
+_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+}
 
 TOOLS = [
     {
@@ -36,9 +47,21 @@ TOOLS = [
 ]
 
 
+def _eval_node(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
+        return _OPS[type(node.op)](_eval_node(node.left), _eval_node(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _OPS:
+        return _OPS[type(node.op)](_eval_node(node.operand))
+    raise ValueError(f"unsupported expression: {ast.dump(node)}")
+
 async def calculate(expression: str) -> str:
-    # ponytail: eval() on arbitrary text is a real injection risk — hardened in Ch7
-    return str(eval(expression))
+    try:
+        tree = ast.parse(expression, mode="eval")
+        return str(_eval_node(tree.body))
+    except Exception as e:
+        return f"Error evaluating expression: {e}"
 
 
 
