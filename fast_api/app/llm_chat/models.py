@@ -44,7 +44,7 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     finish_reason = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    tool_calls = Column(JSON, nullable=True)
+    tool_calls = Column(JSON(none_as_null=True), nullable=True)
     tool_call_id = Column(String(64), nullable=True)
 
     session = relationship("ChatSession", back_populates="messages")

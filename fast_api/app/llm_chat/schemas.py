@@ -42,10 +42,13 @@ class SendMessageRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     id: int
+    session_id: int
     role: str
     content: str
     finish_reason: str | None
     created_at: datetime
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
     model_config = {"from_attributes": True}
 
 class EmbedRequest(BaseModel):

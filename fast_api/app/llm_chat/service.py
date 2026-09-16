@@ -451,6 +451,11 @@ class ChatService:
 
                 async for chunk, _metadata in agent.astream({"messages": messages}, stream_mode="messages"):
                     if chunk.type == "tool":
+                        if collected_ai is not None:
+                            async for frame in flush_assistant(collected_ai):
+                                yield frame
+                            collected_ai = None
+                            last_message_id = None
                         self.db.add(ChatMessage(
                             session_id=session_id_captured, role="tool",
                             content=str(chunk.content), tool_call_id=chunk.tool_call_id,
