@@ -1,10 +1,11 @@
 import ast
 import operator
-import httpx
+
+from langchain_core.tools import tool
+from langchain_openai import OpenAIEmbeddings
 from sqlalchemy.orm import Session
 
 from .schemas import EmbedRequest
-# from .service import embed_texts, find_similar
 from .utils.web_search import get_search_engine
 
 _OPS = {
@@ -16,53 +17,6 @@ _OPS = {
     ast.USub: operator.neg,
 }
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Evaluate a basic arithmetic expression and return the numeric result.",
-            "parameters": {
-                "type": "object",
-                "properties": {"expression": {"type": "string", "description": "e.g. '25 * 18'"}},
-                "required": ["expression"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_documents",
-            "description": (
-                "Search the user's uploaded documents for relevant text. "
-                "Use this for any question about document- or company-specific information "
-                "you would not otherwise know."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "What to search for"}},
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": (
-                "Search the public web for current information. Use this for anything "
-                "outside your training data or the user's own documents — current events, "
-                "prices, external specs, public policies, etc."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "What to search for"}},
-                "required": ["query"],
-            },
-        },
-    },
-]
-
 
 def _eval_node(node):
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -73,7 +27,10 @@ def _eval_node(node):
         return _OPS[type(node.op)](_eval_node(node.operand))
     raise ValueError(f"unsupported expression: {ast.dump(node)}")
 
-async def calculate(expression: str) -> str:
+
+@tool
+def calculate(expression: str) -> str:
+    """Evaluate a basic arithmetic expression and return the numeric result."""
     try:
         tree = ast.parse(expression, mode="eval")
         return str(_eval_node(tree.body))
@@ -81,32 +38,35 @@ async def calculate(expression: str) -> str:
         return f"Error evaluating expression: {e}"
 
 
+def make_search_documents_tool(db: Session, embeddings: OpenAIEmbeddings):
+    @tool
+    async def search_documents(query: str) -> str:
+        """Search the user's uploaded documents for relevant text. Use this for any
+        question about document- or company-specific information you would not
+        otherwise know."""
+        from .service import embed_texts, find_similar
+        embed_result = await embed_texts(EmbedRequest(input=query), embeddings)
+        matches = find_similar(db, embed_result.embeddings[0], limit=3, min_similarity=0.65)
+        if not matches:
+            return "No relevant documents found."
+        return "\n\n".join(
+            f"[{i + 1}] {row.source_text}" for i, (row, _similarity) in enumerate(matches)
+        )
+    return search_documents
 
-async def search_documents(query: str, db: Session, client: httpx.AsyncClient) -> str:
-    from .service import embed_texts, find_similar
-    embed_result = await embed_texts(EmbedRequest(input=query), client)
-    matches = find_similar(db, embed_result.embeddings[0], limit=3, min_similarity=0.65)
 
-    if not matches:
-        return "No relevant documents found."
-
-    return "\n\n".join(
-        f"[{i + 1}] {row.source_text}" for i, (row, _similarity) in enumerate(matches)
-    )
-
+@tool
 async def web_search(query: str) -> str:
+    """Search the public web for current information. Use this for anything outside
+    your training data or the user's own documents — current events, prices,
+    external specs, public policies, etc."""
     engine = get_search_engine()
     try:
         results = await engine.search(query)
     except Exception as e:
         return f"Error performing web search: {e}"
-
     if not results:
         return "No web results found."
-
     return "\n\n".join(
         f"[{i + 1}] {r.title} ({r.url})\n{r.snippet}" for i, r in enumerate(results)
     )
-
-
-TOOL_FUNCTIONS = {"calculate": calculate, "search_documents": search_documents, "web_search": web_search}
