@@ -20,10 +20,15 @@ from app.auth.models import User
 from .utils.chunking import chunk_text
 from .tools import calculate, make_search_documents_tool, web_search
 
+MARKDOWN_SYSTEM_PROMPT = (
+    "Format every response using GitHub-flavored Markdown: headings, bullet/numbered "
+    "lists, **bold**/*italic*, and fenced code blocks with a language tag for any code."
+)
 
 RAG_SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions using ONLY the reference material "
     "provided, delimited by "
+    + MARKDOWN_SYSTEM_PROMPT
 )
 
 RAG_PROMPT = ChatPromptTemplate.from_messages([
@@ -123,7 +128,7 @@ def bind_overrides(llm: ChatOpenAI, temperature: float | None, max_tokens: int |
     return llm.bind(**overrides) if overrides else llm
 
 def build_prompt_messages(body: PromptRequest) -> list[SystemMessage | HumanMessage]:
-    messages = []
+    messages = [SystemMessage(content=MARKDOWN_SYSTEM_PROMPT)]
     if body.system_prompt:
         messages.append(SystemMessage(content=body.system_prompt))
     messages.append(HumanMessage(content=body.prompt))
@@ -320,7 +325,7 @@ class ChatService:
 
     async def build_session_messages(self, session: ChatSession, content: str) -> list[dict]:
         settings = get_llm_settings()
-        messages = []
+        messages = [{"role": "system", "content": MARKDOWN_SYSTEM_PROMPT}]
         if session.system_prompt:
             messages.append({"role": "system", "content": session.system_prompt})
 
