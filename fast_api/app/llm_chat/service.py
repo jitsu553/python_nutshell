@@ -7,7 +7,8 @@ import openai
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.agents import create_agent
+from langgraph.errors import GraphRecursionError
+from .graph import build_agent_graph, RECURSION_LIMIT
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .config import get_llm_settings
@@ -48,7 +49,7 @@ SUMMARY_SYSTEM_PROMPT = (
 
 # MAX_CONTEXT_TOKENS = 2048        # matches Ollama's default num_ctx for mistral
 # RESERVED_FOR_REPLY = 512         # leave room for the model's answer
-MAX_TOOL_ITERATIONS = 5
+# MAX_TOOL_ITERATIONS = 5
 
 def format_sse(data: dict, event: str | None = None) -> str:
     frame = f"event: {event}\n" if event else ""
@@ -323,6 +324,11 @@ class ChatService:
     def list_messages(self, session_id: int) -> list[ChatMessage]:
         return self.get_session_or_404(session_id).messages
 
+    def build_tools(self, session: ChatSession) -> list:
+        if not session.use_tools:
+            return []
+        return [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
+
     async def build_session_messages(self, session: ChatSession, content: str) -> list[dict]:
         settings = get_llm_settings()
         messages = [{"role": "system", "content": MARKDOWN_SYSTEM_PROMPT}]
@@ -372,37 +378,31 @@ class ChatService:
         messages = await self.build_session_messages(session, content)
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
+        agent = build_agent_graph(llm, self.build_tools(session))
 
         try:
-            if session.use_tools:
-                tools = [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
-                agent = create_agent(model=llm, tools=tools)
-                result = await agent.ainvoke({"messages": messages})
-
-                assistant_message = None
-                for msg in result["messages"][len(messages):]:
-                    if msg.type == "ai":
-                        assistant_message = ChatMessage(
-                            session_id=session.id, role="assistant", content=str(msg.content),
-                            # tool_calls=msg.additional_kwargs.get("tool_calls") or None,
-                            tool_calls=msg.tool_calls or None,
-                            finish_reason=msg.response_metadata.get("finish_reason"),
-                        )
-                        self.db.add(assistant_message)
-                    elif msg.type == "tool":
-                        self.db.add(ChatMessage(
-                            session_id=session.id, role="tool", content=str(msg.content),
-                            tool_call_id=msg.tool_call_id,
-                        ))
-            else:
-                response = await llm.ainvoke(messages)
-                assistant_message = ChatMessage(
-                    session_id=session.id, role="assistant", content=str(response.content),
-                    finish_reason=response.response_metadata.get("finish_reason"),
-                )
-                self.db.add(assistant_message)
+            result = await agent.ainvoke(
+                {"messages": messages}, config={"recursion_limit": RECURSION_LIMIT}
+            )
         except openai.APIError as exc:
             raise HTTPException(status_code=502, detail=llm_error_detail(exc))
+        except GraphRecursionError:
+            raise HTTPException(status_code=502, detail="Agent exceeded the tool-call limit")
+
+        assistant_message = None
+        for msg in result["messages"][len(messages):]:
+            if msg.type == "ai":
+                assistant_message = ChatMessage(
+                    session_id=session.id, role="assistant", content=str(msg.content),
+                    tool_calls=msg.tool_calls or None,
+                    finish_reason=msg.response_metadata.get("finish_reason"),
+                )
+                self.db.add(assistant_message)
+            elif msg.type == "tool":
+                self.db.add(ChatMessage(
+                    session_id=session.id, role="tool", content=str(msg.content),
+                    tool_call_id=msg.tool_call_id,
+                ))
 
         self.db.commit()
         self.db.refresh(assistant_message)
@@ -418,14 +418,17 @@ class ChatService:
         session_id_captured = session.id
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
+        agent = build_agent_graph(llm, self.build_tools(session))
+        last_finish_reason = None
 
         async def flush_assistant(msg):
+            nonlocal last_finish_reason
+            last_finish_reason = msg.response_metadata.get("finish_reason")
             self.db.add(ChatMessage(
                 session_id=session_id_captured, role="assistant",
                 content=str(msg.content),
-                # tool_calls=msg.additional_kwargs.get("tool_calls") or None,
                 tool_calls=msg.tool_calls or None,
-                finish_reason=msg.response_metadata.get("finish_reason"),
+                finish_reason=last_finish_reason,
             ))
             self.db.commit()
             for call in (msg.tool_calls or []):
@@ -433,28 +436,14 @@ class ChatService:
 
         async def event_generator():
             try:
-                if not session.use_tools:
-                    collected = None
-                    async for chunk in llm.astream(messages):
-                        collected = chunk if collected is None else collected + chunk
-                        if chunk.content:
-                            yield format_sse({"delta": str(chunk.content)})
-                    if collected is not None:
-                        async for frame in flush_assistant(collected):
-                            yield frame
-                    yield format_sse(
-                        {"finish_reason": collected.response_metadata.get("finish_reason") if collected else None},
-                        event="done",
-                    )
-                    return
-
-                tools = [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
-                agent = create_agent(model=llm, tools=tools)
-
                 collected_ai = None
                 last_message_id = None
 
-                async for chunk, _metadata in agent.astream({"messages": messages}, stream_mode="messages"):
+                async for chunk, _metadata in agent.astream(
+                    {"messages": messages},
+                    config={"recursion_limit": RECURSION_LIMIT},
+                    stream_mode="messages",
+                ):
                     if chunk.type == "tool":
                         if collected_ai is not None:
                             async for frame in flush_assistant(collected_ai):
@@ -483,9 +472,12 @@ class ChatService:
                 if collected_ai is not None:
                     async for frame in flush_assistant(collected_ai):
                         yield frame
-                yield format_sse({}, event="done")
+                yield format_sse({"finish_reason": last_finish_reason}, event="done")
             except openai.APIError as exc:
                 yield format_sse({"detail": llm_error_detail(exc)}, event="stream_error")
+                return
+            except GraphRecursionError:
+                yield format_sse({"detail": "Agent exceeded the tool-call limit"}, event="stream_error")
                 return
 
         return event_generator()
