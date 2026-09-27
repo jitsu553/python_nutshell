@@ -84,11 +84,12 @@ def create_chat_session(body: CreateSessionRequest, db: Session = Depends(get_db
 async def send_chat_message(
     session_id: int,
     body: SendMessageRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
 ):
-    service = ChatService(db, llm, embeddings)
+    service = ChatService(db, llm, embeddings, current_user)
     if body.stream is True:
         generator = await service.send_message_stream(session_id, body.content)
         return StreamingResponse(generator, media_type="text/event-stream")

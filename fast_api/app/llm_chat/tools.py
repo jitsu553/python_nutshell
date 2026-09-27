@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 from .schemas import EmbedRequest
 from .utils.web_search import get_search_engine
 
+from app.auth.models import User
+from app.tickets.schemas import CreateTicketRequest
+from app.tickets.service import TicketService
+
 _OPS = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -70,3 +74,31 @@ async def web_search(query: str) -> str:
     return "\n\n".join(
         f"[{i + 1}] {r.title} ({r.url})\n{r.snippet}" for i, r in enumerate(results)
     )
+
+def make_create_ticket_tool(db: Session, user: User):
+    @tool
+    def create_ticket(subject: str, description: str) -> str:
+        """Create an IT support ticket for the current user. Use this when they
+        report a problem (broken hardware, access request, software issue) and
+        want it logged or fixed. Returns the new ticket ID."""
+        ticket = TicketService(db).create_ticket(
+            user, CreateTicketRequest(subject=subject, description=description)
+        )
+        return f"Created ticket #{ticket.id} (status: {ticket.status})."
+    return create_ticket
+
+def make_get_employee_details_tool(db: Session):
+    @tool
+    def get_employee_details(email: str) -> str:
+        """Look up an employee's role and account status by email address. Use this
+        when the user asks about a colleague's role, whether an account is active,
+        or how long someone has been with the company."""
+        # ponytail: any authenticated user can look up anyone's status; add a role
+        # gate (e.g. require_role("hr")) on the tool factory if this needs limiting.
+        user = db.query(User).filter(User.email == email).first()
+        if user is None:
+            return f"No employee found with email {email}."
+        role = user.role.name if user.role else "no role assigned"
+        status = "active" if user.is_active else "inactive"
+        return f"{user.email} — role: {role}, status: {status}, member since {user.created_at.date()}."
+    return get_employee_details

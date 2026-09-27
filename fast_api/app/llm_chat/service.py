@@ -19,7 +19,7 @@ from app.document_service.service import DocumentService
 from app.document_service.storage import LocalDocumentStorage
 from app.auth.models import User
 from .utils.chunking import chunk_text
-from .tools import calculate, make_search_documents_tool, web_search
+from .tools import calculate, make_search_documents_tool, web_search, make_create_ticket_tool, make_get_employee_details_tool
 
 MARKDOWN_SYSTEM_PROMPT = (
     "Format every response using GitHub-flavored Markdown: headings, bullet/numbered "
@@ -299,10 +299,11 @@ def message_to_wire(message: ChatMessage) -> dict:
 
 
 class ChatService:
-    def __init__(self, db: Session, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None):
+    def __init__(self, db: Session, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None, current_user: User | None = None):
         self.db = db
         self.llm = llm
         self.embeddings = embeddings
+        self.current_user = current_user
 
     def create_session(self, body: CreateSessionRequest) -> ChatSession:
         session = ChatSession(
@@ -327,7 +328,12 @@ class ChatService:
     def build_tools(self, session: ChatSession) -> list:
         if not session.use_tools:
             return []
-        return [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
+        tools = [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
+        if self.current_user is not None:
+            tools.append(make_create_ticket_tool(self.db, self.current_user))
+            if self.current_user.role is not None:
+                tools.append(make_get_employee_details_tool(self.db))
+        return tools
 
     async def build_session_messages(self, session: ChatSession, content: str) -> list[dict]:
         settings = get_llm_settings()

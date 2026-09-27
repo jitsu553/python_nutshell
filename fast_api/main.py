@@ -20,6 +20,8 @@ from app.document_service.router import router as document_router
 from app.llm_chat import models as llm_chat_models
 from app.llm_chat.client import connect_llm_client, close_llm_client 
 from app.llm_chat.router import router as llm_chat_router
+from app.tickets import models as ticket_models
+from app.tickets.router import router as ticket_router
 
 from app.auth import models as auth_models
 from app.db import engine
@@ -111,3 +113,4 @@ app.include_router(external_aggregator_router)
 app.include_router(redis_lab_router)
 app.include_router(document_router)
 app.include_router(llm_chat_router)
+app.include_router(ticket_router)
