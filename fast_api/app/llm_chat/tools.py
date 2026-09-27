@@ -9,6 +9,7 @@ from .schemas import EmbedRequest
 from .utils.web_search import get_search_engine
 
 from app.auth.models import User
+from .models import UserMemory
 from app.tickets.schemas import CreateTicketRequest
 from app.tickets.service import TicketService
 
@@ -102,3 +103,14 @@ def make_get_employee_details_tool(db: Session):
         status = "active" if user.is_active else "inactive"
         return f"{user.email} — role: {role}, status: {status}, member since {user.created_at.date()}."
     return get_employee_details
+
+def make_remember_tool(db: Session, user: User):
+    @tool
+    def remember(fact: str) -> str:
+        """Save a durable fact about the current user that should be recalled in
+        future conversations — preferences, ongoing projects, recurring context.
+        Do not use this for one-off details only relevant to the current message."""
+        db.add(UserMemory(user_id=user.id, content=fact))
+        db.commit()
+        return "Noted — I'll remember that."
+    return remember

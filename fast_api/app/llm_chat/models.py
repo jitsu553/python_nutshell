@@ -60,4 +60,12 @@ class TextEmbedding(Base):
     model = Column(String(100), nullable=False)
     embedding = Column(Vector(768), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class UserMemory(Base):
+    __tablename__ = "user_memories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
   

@@ -12,14 +12,14 @@ from .graph import build_agent_graph, RECURSION_LIMIT
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .config import get_llm_settings
-from .models import ChatMessage, ChatSession, TextEmbedding
+from .models import ChatMessage, ChatSession, TextEmbedding, UserMemory
 from .schemas import CreateSessionRequest, PromptRequest, EmbedRequest, EmbedResponse
 from app.db import SessionLocal
 from app.document_service.service import DocumentService
 from app.document_service.storage import LocalDocumentStorage
 from app.auth.models import User
 from .utils.chunking import chunk_text
-from .tools import calculate, make_search_documents_tool, web_search, make_create_ticket_tool, make_get_employee_details_tool
+from .tools import calculate, make_search_documents_tool, web_search, make_create_ticket_tool, make_get_employee_details_tool, make_remember_tool
 
 MARKDOWN_SYSTEM_PROMPT = (
     "Format every response using GitHub-flavored Markdown: headings, bullet/numbered "
@@ -297,6 +297,14 @@ def message_to_wire(message: ChatMessage) -> dict:
         wire["tool_call_id"] = message.tool_call_id
     return wire
 
+def get_user_memories(db: Session, user_id: int, limit: int = 20) -> list[UserMemory]:
+    return (
+        db.query(UserMemory)
+        .filter(UserMemory.user_id == user_id)
+        .order_by(UserMemory.id.desc())
+        .limit(limit)
+        .all()
+    )
 
 class ChatService:
     def __init__(self, db: Session, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None, current_user: User | None = None):
@@ -331,6 +339,7 @@ class ChatService:
         tools = [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
         if self.current_user is not None:
             tools.append(make_create_ticket_tool(self.db, self.current_user))
+            tools.append(make_remember_tool(self.db, self.current_user))
             if self.current_user.role is not None:
                 tools.append(make_get_employee_details_tool(self.db))
         return tools
@@ -340,6 +349,15 @@ class ChatService:
         messages = [{"role": "system", "content": MARKDOWN_SYSTEM_PROMPT}]
         if session.system_prompt:
             messages.append({"role": "system", "content": session.system_prompt})
+
+        if self.current_user is not None:
+            memories = get_user_memories(self.db, self.current_user.id)
+            if memories:
+                facts = "\n".join(f"- {m.content}" for m in reversed(memories))
+                messages.append({
+                    "role": "system",
+                    "content": f"What you remember about this user from past conversations:\n{facts}",
+                })
 
         if session.use_rag:
             embed_result = await embed_texts(EmbedRequest(input=content), self.embeddings)
