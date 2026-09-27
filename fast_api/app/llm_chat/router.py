@@ -16,7 +16,8 @@ from .schemas import (
     PromptRequest, PromptResponse, CreateSessionRequest, MessageResponse, SendMessageRequest, 
     SessionResponse, EmbedRequest, EmbedResponse, SimilarityRequest, SimilarityResponse,
     IngestResponse, SearchRequest, SearchResponse, SearchResult,
-    RagAskRequest, RagAskResponse, RagSource
+    RagAskRequest, RagAskResponse, RagSource, PendingApprovalResponse,
+    ApprovalDecisionRequest
     )
 from .service import (
     ChatService, build_payload, embed_texts, find_similar, 
@@ -80,7 +81,7 @@ def create_chat_session(body: CreateSessionRequest, db: Session = Depends(get_db
     return ChatService(db).create_session(body)
 
 
-@router.post("/sessions/{session_id}/messages", response_model=MessageResponse)
+@router.post("/sessions/{session_id}/messages", response_model=MessageResponse | PendingApprovalResponse)
 async def send_chat_message(
     session_id: int,
     body: SendMessageRequest,
@@ -88,8 +89,9 @@ async def send_chat_message(
     db: Session = Depends(get_db),
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
+    checkpointer = Depends(get_checkpointer),
 ):
-    service = ChatService(db, llm, embeddings, current_user)
+    service = ChatService(db, llm, embeddings, current_user, checkpointer)
     if body.stream is True:
         generator = await service.send_message_stream(session_id, body.content)
         return StreamingResponse(generator, media_type="text/event-stream")
@@ -193,3 +195,18 @@ async def ask_with_rag(
             for row, similarity in matches
         ],
     )
+
+
+@router.post("/sessions/{session_id}/approvals/{approval_id}/decision", response_model=MessageResponse)
+async def decide_approval(
+    session_id: int,
+    approval_id: int,
+    body: ApprovalDecisionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    llm: ChatOpenAI = Depends(get_llm_client),
+    embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
+    checkpointer = Depends(get_checkpointer),
+):
+    service = ChatService(db, llm, embeddings, current_user, checkpointer)
+    return await service.resolve_approval(session_id, approval_id, body.approved)

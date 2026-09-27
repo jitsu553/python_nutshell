@@ -20,6 +20,7 @@ from app.document_service.router import router as document_router
 from app.llm_chat import models as llm_chat_models
 from app.llm_chat.client import connect_llm_client, close_llm_client 
 from app.llm_chat.router import router as llm_chat_router
+from app.llm_chat.graph import connect_checkpointer, close_checkpointer
 from app.tickets import models as ticket_models
 from app.tickets.router import router as ticket_router
 
@@ -76,6 +77,14 @@ async def startup_llm_client():
     except Exception as exc:
         logger.warning("LLM Client connection skipped during startup: %s", exc)
 
+@app.on_event("startup")
+async def startup_checkpointer():
+    try:
+        await connect_checkpointer(app)
+        logger.info("LangGraph checkpointer connected")
+    except Exception as exc:
+        logger.warning("Checkpointer connection skipped during startup: %s", exc)
+
 # Shutdown hook for external_api_aggregator shared HTTP client
 @app.on_event("shutdown")
 async def shutdown_external_aggregator():
@@ -102,7 +111,15 @@ async def shutdown_llm():
         await close_llm_client(app)
         logger.info("LLM Client closed")
     except Exception as exc:
-        logger.warning("LLM Client shutdown warning: %s", exc)                   
+        logger.warning("LLM Client shutdown warning: %s", exc)
+
+@app.on_event("shutdown")
+async def shutdown_checkpointer():
+    try:
+        await close_checkpointer(app)
+        logger.info("LangGraph checkpointer closed")
+    except Exception as exc:
+        logger.warning("Checkpointer shutdown warning: %s", exc)
 
 # Include routers
 app.include_router(system_router)

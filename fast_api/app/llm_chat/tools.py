@@ -3,6 +3,7 @@ import operator
 
 from langchain_core.tools import tool
 from langchain_openai import OpenAIEmbeddings
+from langgraph.types import interrupt
 from sqlalchemy.orm import Session
 
 from .schemas import EmbedRequest
@@ -82,6 +83,13 @@ def make_create_ticket_tool(db: Session, user: User):
         """Create an IT support ticket for the current user. Use this when they
         report a problem (broken hardware, access request, software issue) and
         want it logged or fixed. Returns the new ticket ID."""
+        decision = interrupt({
+            "action": "create_ticket",
+            "subject": subject,
+            "description": description,
+        })
+        if not decision.get("approved"):
+            return "Ticket creation was not approved."
         ticket = TicketService(db).create_ticket(
             user, CreateTicketRequest(subject=subject, description=description)
         )

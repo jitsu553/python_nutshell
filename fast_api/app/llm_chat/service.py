@@ -1,5 +1,6 @@
 
 from fastapi import HTTPException
+from datetime import datetime
 from sqlalchemy.orm import Session
 import httpx
 import json
@@ -8,11 +9,12 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
 from .graph import build_agent_graph, RECURSION_LIMIT
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .config import get_llm_settings
-from .models import ChatMessage, ChatSession, TextEmbedding, UserMemory
+from .models import ChatMessage, ChatSession, TextEmbedding, UserMemory, PendingApproval
 from .schemas import CreateSessionRequest, PromptRequest, EmbedRequest, EmbedResponse
 from app.db import SessionLocal
 from app.document_service.service import DocumentService
@@ -307,11 +309,12 @@ def get_user_memories(db: Session, user_id: int, limit: int = 20) -> list[UserMe
     )
 
 class ChatService:
-    def __init__(self, db: Session, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None, current_user: User | None = None):
+    def __init__(self, db: Session, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None, current_user: User | None = None, checkpointer=None):
         self.db = db
         self.llm = llm
         self.embeddings = embeddings
         self.current_user = current_user
+        self.checkpointer = checkpointer
 
     def create_session(self, body: CreateSessionRequest) -> ChatSession:
         session = ChatSession(
@@ -396,22 +399,41 @@ class ChatService:
     async def send_message(self, session_id: int, content: str) -> ChatMessage:
         session = self.get_session_or_404(session_id)
 
-        self.db.add(ChatMessage(session_id=session.id, role="user", content=content))
+        user_message = ChatMessage(session_id=session.id, role="user", content=content)
+        self.db.add(user_message)
         self.db.commit()
+        self.db.refresh(user_message)
 
         messages = await self.build_session_messages(session, content)
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
-        agent = build_agent_graph(llm, self.build_tools(session))
+        agent = build_agent_graph(llm, self.build_tools(session), self.checkpointer)
+
+        thread_id = f"session-{session.id}-turn-{user_message.id}"
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
 
         try:
-            result = await agent.ainvoke(
-                {"messages": messages}, config={"recursion_limit": RECURSION_LIMIT}
-            )
+            result = await agent.ainvoke({"messages": messages}, config=config)
         except openai.APIError as exc:
             raise HTTPException(status_code=502, detail=llm_error_detail(exc))
         except GraphRecursionError:
             raise HTTPException(status_code=502, detail="Agent exceeded the tool-call limit")
+
+        if result.get("__interrupt__"):
+            payload = result["__interrupt__"][0].value
+            approval = PendingApproval(
+                session_id=session.id,
+                thread_id=thread_id,
+                tool_name=payload.get("action", "unknown"),
+                tool_args=payload,
+                status="pending",
+                requested_by_id=self.current_user.id if self.current_user else None,
+                input_message_count=len(messages),
+            )
+            self.db.add(approval)
+            self.db.commit()
+            self.db.refresh(approval)
+            return approval
 
         assistant_message = None
         for msg in result["messages"][len(messages):]:
@@ -442,7 +464,7 @@ class ChatService:
         session_id_captured = session.id
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
-        agent = build_agent_graph(llm, self.build_tools(session))
+        agent = build_agent_graph(llm, self.build_tools(session), self.checkpointer)
         last_finish_reason = None
 
         async def flush_assistant(msg):
@@ -505,3 +527,51 @@ class ChatService:
                 return
 
         return event_generator()
+
+    async def resolve_approval(self, session_id: int, approval_id: int, approved: bool) -> ChatMessage:
+        session = self.get_session_or_404(session_id)
+        approval = (
+            self.db.query(PendingApproval)
+            .filter(PendingApproval.id == approval_id, PendingApproval.session_id == session_id)
+            .first()
+        )
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        if approval.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Approval already {approval.status}")
+
+        llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
+        agent = build_agent_graph(llm, self.build_tools(session), self.checkpointer)
+        config = {"configurable": {"thread_id": approval.thread_id}, "recursion_limit": RECURSION_LIMIT}
+
+        try:
+            result = await agent.ainvoke(Command(resume={"approved": approved}), config=config)
+        except openai.APIError as exc:
+            raise HTTPException(status_code=502, detail=llm_error_detail(exc))
+        except GraphRecursionError:
+            raise HTTPException(status_code=502, detail="Agent exceeded the tool-call limit")
+
+        approval.status = "approved" if approved else "rejected"
+        approval.decided_by_id = self.current_user.id if self.current_user else None
+        approval.decided_at = datetime.utcnow()
+        self.db.commit()
+
+        assistant_message = None
+        for msg in result["messages"][approval.input_message_count:]:
+            if msg.type == "ai":
+                assistant_message = ChatMessage(
+                    session_id=session.id, role="assistant", content=str(msg.content),
+                    tool_calls=msg.tool_calls or None,
+                    finish_reason=msg.response_metadata.get("finish_reason"),
+                )
+                self.db.add(assistant_message)
+            elif msg.type == "tool":
+                self.db.add(ChatMessage(
+                    session_id=session.id, role="tool", content=str(msg.content),
+                    tool_call_id=msg.tool_call_id,
+                ))
+
+        self.db.commit()
+        if assistant_message:
+            self.db.refresh(assistant_message)
+        return assistant_message

@@ -68,4 +68,26 @@ class UserMemory(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class PendingApproval(Base):
+    __tablename__ = "pending_approvals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tool_name = Column(String(100), nullable=False)
+    tool_args = Column(JSON(none_as_null=True), nullable=False)
+    thread_id = Column(String(100), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")  # pending | approved | rejected
+    input_message_count = Column(Integer, nullable=False)
+    requested_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    decided_at = Column(DateTime, nullable=True)
+
+    session = relationship("ChatSession")
   

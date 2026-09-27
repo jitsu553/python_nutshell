@@ -103,5 +103,17 @@ class RagSource(BaseModel):
 class RagAskResponse(BaseModel):
     question: str
     answer: str
-    sources: list[RagSource]    
+    sources: list[RagSource]
+
+class PendingApprovalResponse(BaseModel):
+    id: int
+    session_id: int
+    tool_name: str
+    tool_args: dict
+    status: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+class ApprovalDecisionRequest(BaseModel):
+    approved: bool
 
