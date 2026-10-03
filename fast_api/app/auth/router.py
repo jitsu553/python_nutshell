@@ -60,10 +60,10 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 2. Get or create default "user" role
-    role = db.query(Role).filter(Role.name == "user").first()
+    # 2. Get or create the requested role (defaults to "user")
+    role = db.query(Role).filter(Role.name == body.role).first()
     if not role:
-        role = Role(name="user")
+        role = Role(name=body.role)
         db.add(role)
         db.flush()  # flush to get role.id without committing yet
 

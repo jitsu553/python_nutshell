@@ -1,4 +1,6 @@
 # app/auth/schemas.py
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr
 
 
@@ -6,6 +8,7 @@ from pydantic import BaseModel, EmailStr
 class RegisterRequest(BaseModel):
     email: EmailStr          # pydantic validates it's a real email format
     password: str
+    role: Literal["admin", "user"] = "user"
 
 
 # --- Login ---
