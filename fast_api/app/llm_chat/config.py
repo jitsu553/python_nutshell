@@ -15,6 +15,9 @@ class LLMSettings(BaseSettings):
     llm_history_compact_threshold: int = 1024   # Ch6 — tokens of new history before summarizing
     llm_history_keep_raw_turns: int = 5         # Ch6 — recent turns always kept un-summarized
     llm_web_search_engine: str = "duckduckgo"
+    mcp_server_url: str = "http://localhost:8100/mcp"
+    mcp_server_host: str = "0.0.0.0"
+    mcp_server_port: int = 8100
 
 
 @lru_cache

@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.auth.dependencies import get_db,get_current_user
 from .client import get_llm_client, get_embeddings_client
+from .graph import get_checkpointer
 from .config import get_llm_settings
 from .models import ChatSession, TextEmbedding
 from .schemas import ( 

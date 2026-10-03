@@ -13,6 +13,7 @@ from app.auth.models import User
 from .models import UserMemory
 from app.tickets.schemas import CreateTicketRequest
 from app.tickets.service import TicketService
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 _OPS = {
     ast.Add: operator.add,

@@ -12,6 +12,7 @@ from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from .graph import build_agent_graph, RECURSION_LIMIT
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from .config import get_llm_settings
 from .models import ChatMessage, ChatSession, TextEmbedding, UserMemory, PendingApproval
@@ -48,6 +49,15 @@ SUMMARY_SYSTEM_PROMPT = (
     "facts, decisions, and anything the user would expect you to still remember. "
     "Write it as a short paragraph, not a transcript."
 )
+
+_settings = get_llm_settings()
+
+_mcp_client = MultiServerMCPClient({
+    "llm-chat-tools": {
+        "transport": "streamable_http",
+        "url": _settings.mcp_server_url,
+    },
+})
 
 # MAX_CONTEXT_TOKENS = 2048        # matches Ollama's default num_ctx for mistral
 # RESERVED_FOR_REPLY = 512         # leave room for the model's answer
@@ -336,7 +346,7 @@ class ChatService:
     def list_messages(self, session_id: int) -> list[ChatMessage]:
         return self.get_session_or_404(session_id).messages
 
-    def build_tools(self, session: ChatSession) -> list:
+    async def build_tools(self, session: ChatSession) -> list:
         if not session.use_tools:
             return []
         tools = [calculate, make_search_documents_tool(self.db, self.embeddings), web_search]
@@ -344,7 +354,8 @@ class ChatService:
             tools.append(make_create_ticket_tool(self.db, self.current_user))
             tools.append(make_remember_tool(self.db, self.current_user))
             if self.current_user.role is not None:
-                tools.append(make_get_employee_details_tool(self.db))
+                mcp_tools = await _mcp_client.get_tools(server_name="llm-chat-tools")
+                tools.extend(t for t in mcp_tools if t.name == "get_employee_details")
         return tools
 
     async def build_session_messages(self, session: ChatSession, content: str) -> list[dict]:
@@ -407,7 +418,7 @@ class ChatService:
         messages = await self.build_session_messages(session, content)
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
-        agent = build_agent_graph(llm, self.build_tools(session), self.checkpointer)
+        agent = build_agent_graph(llm, await self.build_tools(session), self.checkpointer)
 
         thread_id = f"session-{session.id}-turn-{user_message.id}"
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
@@ -464,7 +475,7 @@ class ChatService:
         session_id_captured = session.id
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
-        agent = build_agent_graph(llm, self.build_tools(session), self.checkpointer)
+        agent = build_agent_graph(llm, await self.build_tools(session), self.checkpointer)
         last_finish_reason = None
 
         async def flush_assistant(msg):
@@ -541,7 +552,7 @@ class ChatService:
             raise HTTPException(status_code=409, detail=f"Approval already {approval.status}")
 
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
-        agent = build_agent_graph(llm, self.build_tools(session), self.checkpointer)
+        agent = build_agent_graph(llm, await self.build_tools(session), self.checkpointer)
         config = {"configurable": {"thread_id": approval.thread_id}, "recursion_limit": RECURSION_LIMIT}
 
         try:
