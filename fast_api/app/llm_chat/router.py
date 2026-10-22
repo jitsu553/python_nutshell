@@ -1,5 +1,4 @@
 import json
-
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -28,9 +27,11 @@ from .service import (
 )
 from .utils.similarity import cosine_similarity
 from app.auth.models import User
+from app.redis_lab.client import get_optional_redis
+from app.redis_lab.rate_limit import user_rate_limit
 
 
-router = APIRouter(prefix="/llm-chat", tags=["llm-chat"])
+router = APIRouter(prefix="/llm-chat", tags=["llm-chat"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("/prompt", response_model=PromptResponse)
@@ -77,12 +78,21 @@ async def send_prompt_stream(
         yield format_sse({}, event="done")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @router.post("/sessions", response_model=SessionResponse)
-def create_chat_session(body: CreateSessionRequest, db: Session = Depends(get_db)) -> ChatSession:
-    return ChatService(db).create_session(body)
+def create_chat_session(
+    body: CreateSessionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChatSession:
+    return ChatService(db, current_user=current_user).create_session(body)
 
 
-@router.post("/sessions/{session_id}/messages", response_model=MessageResponse | PendingApprovalResponse)
+@router.post(
+    "/sessions/{session_id}/messages",
+    response_model=MessageResponse | PendingApprovalResponse,
+    dependencies=[Depends(user_rate_limit(limit=20, window_seconds=60, key_prefix="chat-msg"))],
+)
 async def send_chat_message(
     session_id: int,
     body: SendMessageRequest,
@@ -91,8 +101,9 @@ async def send_chat_message(
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
     checkpointer = Depends(get_checkpointer),
+    redis = Depends(get_optional_redis),
 ):
-    service = ChatService(db, llm, embeddings, current_user, checkpointer)
+    service = ChatService(db, llm, embeddings, current_user, checkpointer, redis)
     if body.stream is True:
         generator = await service.send_message_stream(session_id, body.content)
         return StreamingResponse(generator, media_type="text/event-stream")
@@ -100,8 +111,12 @@ async def send_chat_message(
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
-def get_chat_messages(session_id: int, db: Session = Depends(get_db)):
-    return ChatService(db).list_messages(session_id)
+def get_chat_messages(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return ChatService(db, current_user=current_user).list_messages(session_id)
 
 
 @router.post("/embeddings", response_model=EmbedResponse)
@@ -198,7 +213,7 @@ async def ask_with_rag(
     )
 
 
-@router.post("/sessions/{session_id}/approvals/{approval_id}/decision", response_model=MessageResponse)
+@router.post("/sessions/{session_id}/approvals/{approval_id}/decision", response_model=MessageResponse | PendingApprovalResponse)
 async def decide_approval(
     session_id: int,
     approval_id: int,
@@ -208,6 +223,14 @@ async def decide_approval(
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
     checkpointer = Depends(get_checkpointer),
+    redis = Depends(get_optional_redis),
 ):
-    service = ChatService(db, llm, embeddings, current_user, checkpointer)
-    return await service.resolve_approval(session_id, approval_id, body.approved)
+    service = ChatService(db, llm, embeddings, current_user, checkpointer, redis)
+    return await service.resolve_approval(session_id, approval_id, body.approved, body.reason)
+
+@router.get("/approvals/pending", response_model=list[PendingApprovalResponse])
+def list_pending_approvals(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return ChatService(db, current_user=current_user).list_pending_approvals()

@@ -1,6 +1,9 @@
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
+import logging
+
+log = logging.getLogger(__name__)
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -9,7 +12,8 @@ from redis.exceptions import RedisError
 async def cache_get_json(redis: Redis, key: str) -> Any | None:
     try:
         raw = await redis.get(key)  # GET
-    except RedisError:
+    except RedisError as e:
+        log.warning("redis cache unavailable, failing open: %s", e)
         return None
 
     if raw is None:
@@ -25,8 +29,9 @@ async def cache_set_json(redis: Redis, key: str, value: Any, ttl_seconds: int) -
     payload = json.dumps(value, separators=(",", ":"), default=str)
     try:
         await redis.set(key, payload, ex=ttl_seconds)  # SET with EXPIRE in one call
-    except RedisError:
-        return
+    except RedisError as e:
+        log.warning("redis cache unavailable, failing open: %s", e)
+        return None
 
 
 async def get_or_set_cache(

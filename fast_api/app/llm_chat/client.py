@@ -14,6 +14,7 @@ async def connect_llm_client(app: FastAPI) -> None:
         api_key=settings.llm_api_key,
         model=settings.llm_model,
         timeout=settings.llm_request_timeout_seconds,
+        max_retries=2,
     )
     embeddings = OpenAIEmbeddings(
         base_url=settings.llm_base_url,

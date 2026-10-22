@@ -31,3 +31,6 @@ def get_redis_from_request(request: Request) -> Redis:
     if client is None:
         raise RuntimeError("Redis client is not initialized on app.state")
     return client
+
+def get_optional_redis(request: Request) -> Redis | None:
+    return getattr(request.app.state, REDIS_APP_STATE_KEY, None)

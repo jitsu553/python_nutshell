@@ -11,7 +11,7 @@ class Ticket(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     subject = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
     status = Column(String(20), nullable=False, default="open", index=True)

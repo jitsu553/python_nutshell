@@ -1,10 +1,15 @@
 import time
+import logging
 
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+from app.auth.dependencies import get_current_user
+from app.auth.models import User
 
-from .client import get_redis_from_request
+from .client import get_redis_from_request, get_optional_redis
+
+log = logging.getLogger(__name__)
 
 
 def _client_identifier(request: Request) -> str:
@@ -53,6 +58,33 @@ def rate_limit(limit: int, window_seconds: int, key_prefix: str = "rl"):
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests. Please retry later.",
                 headers={"Retry-After": str(retry_after)},
+            )
+
+    return dependency
+
+def user_rate_limit(limit: int, window_seconds: int, key_prefix: str):
+    """Fixed window per logged-in user. Fails open if Redis is down."""
+
+    async def dependency(
+        current_user: User = Depends(get_current_user),
+        redis: Redis | None = Depends(get_optional_redis),
+    ) -> None:
+        if redis is None:
+            return
+        now = int(time.time())
+        key = f"{key_prefix}:user-{current_user.id}:{now // window_seconds}"
+        try:
+            current = await redis.incr(key)
+            if current == 1:
+                await redis.expire(key, window_seconds)
+        except RedisError as e:
+            log.warning("rate limit skipped, redis unavailable: %s", e)
+            return
+        if current > limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many messages. Please slow down.",
+                headers={"Retry-After": str(window_seconds - now % window_seconds)},
             )
 
     return dependency

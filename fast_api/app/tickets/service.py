@@ -11,7 +11,7 @@ class TicketService:
         self.db = db
 
     def create_ticket(self, user: User, body: CreateTicketRequest) -> Ticket:
-        ticket = Ticket(user_id=user.id, subject=body.subject, description=body.description)
+        ticket = Ticket(user_id=user.id, customer_id=body.customer_id, subject=body.subject, description=body.description)
         self.db.add(ticket)
         self.db.commit()
         self.db.refresh(ticket)
@@ -41,3 +41,21 @@ class TicketService:
         self.db.commit()
         self.db.refresh(ticket)
         return ticket
+
+    def list_for_customer(self, customer_id: int, limit: int = 3, status: str | None = None) -> list[Ticket]:
+        q = self.db.query(Ticket).filter(Ticket.customer_id == customer_id)
+        if status:
+            q = q.filter(Ticket.status == status)
+        return q.order_by(Ticket.created_at.desc()).limit(limit).all()
+
+    def get_any(self, ticket_id: int) -> Ticket | None:
+        return self.db.get(Ticket, ticket_id)
+
+    def set_status_any(self, ticket_id: int, status: str) -> Ticket | None:
+        ticket = self.db.get(Ticket, ticket_id)
+        if ticket is None:
+            return None
+        ticket.status = status
+        self.db.commit()
+        self.db.refresh(ticket)
+        return ticket    

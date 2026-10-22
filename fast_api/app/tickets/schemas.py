@@ -5,11 +5,13 @@ from pydantic import BaseModel, Field
 class CreateTicketRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=255)
     description: str = Field(min_length=1, max_length=4000)
+    customer_id: int | None = None
 
 
 class TicketResponse(BaseModel):
     id: int
     user_id: int
+    customer_id: int | None = None
     subject: str
     description: str
     status: str

@@ -5,6 +5,8 @@ load_dotenv()  # Load .env for local development
 from fastapi import FastAPI
 import logging
 import httpx
+import os
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
 from app.routers.system import router as system_router
@@ -21,6 +23,8 @@ from app.llm_chat.router import router as llm_chat_router
 from app.llm_chat.graph import connect_checkpointer, close_checkpointer
 from app.tickets import models as ticket_models
 from app.tickets.router import router as ticket_router
+from app.customers import models as customer_models
+from app.customers.router import router as customer_router
 
 from app.auth import models as auth_models
 from app.db import engine
@@ -33,6 +37,14 @@ logging.basicConfig(
 
 
 app = FastAPI(title="Python Nutshell FastAPI Demo", swagger_ui_parameters={"docExpansion": "none"})
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
+    allow_credentials=True,  # you use httponly cookies; credentials require explicit origins, never "*"
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 print("Starting FastAPI application...")
 
@@ -127,3 +139,4 @@ app.include_router(redis_lab_router)
 app.include_router(document_router)
 app.include_router(llm_chat_router)
 app.include_router(ticket_router)
+app.include_router(customer_router)

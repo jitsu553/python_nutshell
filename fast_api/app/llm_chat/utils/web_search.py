@@ -2,10 +2,15 @@ from functools import lru_cache
 import httpx
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import parse_qs, urlparse
 
 from app.llm_chat.config import get_llm_settings
 from bs4 import BeautifulSoup
 
+def _real_url(href: str) -> str:
+    # DuckDuckGo wraps links as //duckduckgo.com/l/?uddg=<real-url>
+    q = parse_qs(urlparse(href).query)
+    return q["uddg"][0] if "uddg" in q else href
 
 @dataclass
 class SearchResult:
@@ -39,9 +44,9 @@ class DuckDuckGoSearchEngine:
                 continue
             snippet_tag = block.select_one(".result__snippet")
             results.append(SearchResult(
-                title=title_tag.get_text(strip=True),
-                url=title_tag.get("href", ""),
-                snippet=snippet_tag.get_text(strip=True) if snippet_tag else "",
+                title=title_tag.get_text(" ", strip=True),
+                 url=_real_url(title_tag.get("href", "")),
+                snippet=snippet_tag.get_text(" ", strip=True) if snippet_tag else "",
             ))
         return results
 

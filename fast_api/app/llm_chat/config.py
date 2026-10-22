@@ -18,6 +18,7 @@ class LLMSettings(BaseSettings):
     mcp_server_url: str = "http://localhost:8100/mcp"
     mcp_server_host: str = "0.0.0.0"
     mcp_server_port: int = 8100
+    mcp_auth_token: str = ""
 
 
 @lru_cache

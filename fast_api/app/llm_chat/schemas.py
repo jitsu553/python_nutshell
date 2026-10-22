@@ -116,4 +116,5 @@ class PendingApprovalResponse(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     approved: bool
+    reason: str = Field(default="", max_length=500)
 
