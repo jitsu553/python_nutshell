@@ -1,15 +1,27 @@
 """Live-API evals. Run:  python evals/run_evals.py [name-filter ...]
 Env: EVAL_EMAIL, EVAL_PASSWORD (admin); optional EVAL_EMAIL2, EVAL_PASSWORD2 (non-admin); EVAL_BASE.
 Every approval is REJECTED, so a run sends no email and refunds nothing."""
-import os
 import re
 import sys
 import time
 
 import httpx
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE = os.getenv("EVAL_BASE", "http://localhost:8000")
-client = httpx.Client(base_url=BASE, timeout=600)  # one agent turn can take minutes
+
+class EvalSettings(BaseSettings):
+    # Own settings on purpose: this script is an HTTP client and must not need the app's SECRET_KEY/DATABASE_URL.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    eval_base: str = "http://localhost:8000"
+    eval_email: str
+    eval_password: str
+    eval_email2: str = ""
+    eval_password2: str = ""
+
+
+settings = EvalSettings()
+client = httpx.Client(base_url=settings.eval_base, timeout=600)  # one agent turn can take minutes
 
 
 def login(email: str, password: str) -> dict:
@@ -86,9 +98,9 @@ CASES = [
 
 def main() -> int:
     only = [a.lower() for a in sys.argv[1:]]
-    who = {"admin": login(os.environ["EVAL_EMAIL"], os.environ["EVAL_PASSWORD"])}
-    if os.getenv("EVAL_EMAIL2"):
-        who["user2"] = login(os.environ["EVAL_EMAIL2"], os.environ["EVAL_PASSWORD2"])
+    who = {"admin": login(settings.eval_email, settings.eval_password)}
+    if settings.eval_email2:
+        who["user2"] = login(settings.eval_email2, settings.eval_password2)
 
     failed = 0
     for name, user, prompt, check in CASES:

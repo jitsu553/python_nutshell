@@ -5,29 +5,24 @@ load_dotenv()  # Load .env for local development
 from fastapi import FastAPI
 import logging
 import httpx
-import os
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db import init_db
+from app.core.config import get_settings
+from app import models as _models  # noqa: F401  registers every table with Base
+from app.infra.database import init_db
 from app.routers.system import router as system_router
-from app.auth.router import router as auth_router
-from app.external_api_aggregator.config import settings as external_aggregator_settings
-from app.external_api_aggregator.router import router as external_aggregator_router
-from app.redis_lab.client import connect_redis, close_redis
-from app.redis_lab.router import router as redis_lab_router
-from app.document_service import models as document_models
-from app.document_service.router import router as document_router
-from app.llm_chat import models as llm_chat_models
-from app.llm_chat.client import connect_llm_client, close_llm_client 
-from app.llm_chat.router import router as llm_chat_router
-from app.llm_chat.graph import connect_checkpointer, close_checkpointer
-from app.tickets import models as ticket_models
-from app.tickets.router import router as ticket_router
-from app.customers import models as customer_models
-from app.customers.router import router as customer_router
+from app.routers.auth import router as auth_router
+from app.routers.aggregator import router as external_aggregator_router
+from app.infra.redis_client import connect_redis, close_redis
+from app.routers.redis import router as redis_lab_router
+from app.routers.documents import router as document_router
+from app.services.llm.client import connect_llm_client, close_llm_client 
+from app.routers.llm_chat import router as llm_chat_router
+from app.services.llm.graph import connect_checkpointer, close_checkpointer
+from app.routers.tickets import router as ticket_router
+from app.routers.customers import router as customer_router
 
-from app.auth import models as auth_models
-from app.db import engine
+from app.infra.database import engine
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -40,7 +35,7 @@ app = FastAPI(title="Python Nutshell FastAPI Demo", swagger_ui_parameters={"docE
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
+    allow_origins=get_settings().cors_origins.split(","),
     allow_credentials=True,  # you use httponly cookies; credentials require explicit origins, never "*"
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,7 +60,7 @@ async def startup_external_aggregator():
     try:
         app.state.external_aggregator_http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(5.0),
-            verify=external_aggregator_settings.ssl_verify,
+            verify=get_settings().external_aggregator_ssl_verify,
         )
         logger.info("Created shared HTTP client for external_api_aggregator")
     except Exception as exc:

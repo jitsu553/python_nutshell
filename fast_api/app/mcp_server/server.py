@@ -4,11 +4,11 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
-from app.db import SessionLocal
-from app.auth.models import User
-from app.llm_chat.config import get_llm_settings
+from app.infra.database import SessionLocal
+from app.models.auth import User
+from app.core.config import get_settings
 
-_settings = get_llm_settings()
+_settings = get_settings()
 mcp = FastMCP("llm-chat-tools", host=_settings.mcp_server_host, port=_settings.mcp_server_port)
 
 

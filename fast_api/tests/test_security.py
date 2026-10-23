@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.auth.dependencies import require_role
-from app.llm_chat.tool_registry import requires_approval, user_may_use, not_asked
+from app.core.dependencies import require_role
+from app.services.llm.tool_registry import requires_approval, user_may_use, not_asked
 
 
 def user(role):

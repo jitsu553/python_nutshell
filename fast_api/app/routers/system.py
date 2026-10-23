@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_db
-from app.redis_lab.client import get_optional_redis
+from app.core.dependencies import get_db
+from app.infra.redis_client import get_optional_redis
 
 router = APIRouter()
 
