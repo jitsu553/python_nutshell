@@ -34,7 +34,11 @@ services:
       timeout: 5s
       retries: 20
 
+  # Ollama is disabled by default (using the locally installed one, see LLM_BASE_URL in .env).
+  # To run it in docker instead: `docker compose --profile ollama up -d`, and switch LLM_BASE_URL
+  # in .env to http://ollama:11434/v1. See README "Ollama in docker".
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: fast_api_ollama
     attach: false
@@ -50,6 +54,7 @@ services:
     restart: unless-stopped
 
   ollama-pull:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: fast_api_ollama_pull
     attach: false
@@ -90,8 +95,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      ollama:
+      ollama:  # only waited on when the "ollama" profile is enabled
         condition: service_healthy
+        required: false
       mcp-server:
         condition: service_started
     volumes:

@@ -1,15 +1,32 @@
 # fast_api: local setup
 
-Postgres, Redis and Ollama all run via docker compose. No local Ollama install needed.
+Postgres and Redis run via docker compose. Ollama is **disabled in compose by default**: the app uses
+the locally installed Ollama through `LLM_BASE_URL=http://host.docker.internal:11434/v1` in `.env`.
+To run Ollama in docker instead, see "Ollama in docker" below.
 
 ## First-time setup
 
 ```bash
 cp .env.example .env              # then set SECRET_KEY etc.
-docker volume create ollama_data  # external volume, holds the downloaded models
 docker compose up -d --build
-docker compose logs -f ollama-pull   # first run downloads the models (several GB)
 ```
+
+## Ollama in docker
+
+The `ollama` and `ollama-pull` services sit behind the `ollama` compose profile (no model downloads
+or extra container unless you ask for it).
+
+```bash
+docker volume create ollama_data              # once; external volume, holds the downloaded models
+docker compose --profile ollama up -d --build
+docker compose logs -f ollama-pull            # first run downloads the models (several GB)
+```
+
+Then in `.env` switch `LLM_BASE_URL` to `http://ollama:11434/v1` (comment the `host.docker.internal`
+line) and run `docker compose up -d api`. To go back to the local install, revert that line and run
+`docker compose stop ollama`.
+
+The sections below ("Ollama" port, models, logs, volume) only apply when the profile is enabled.
 
 Ollama is reachable from the host at `http://localhost:11435` (11435, so it doesn't clash with a
 host-installed Ollama on 11434). The api container reaches it at `http://ollama:11434/v1`
