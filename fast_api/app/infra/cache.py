@@ -1,5 +1,4 @@
 import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 import logging
 
@@ -32,18 +31,3 @@ async def cache_set_json(redis: Redis, key: str, value: Any, ttl_seconds: int) -
     except RedisError as e:
         log.warning("redis cache unavailable, failing open: %s", e)
         return None
-
-
-async def get_or_set_cache(
-    redis: Redis,
-    key: str,
-    ttl_seconds: int,
-    producer: Callable[[], Awaitable[Any]],
-) -> tuple[Any, bool]:
-    cached = await cache_get_json(redis, key)
-    if cached is not None:
-        return cached, True
-
-    fresh = await producer()
-    await cache_set_json(redis, key, fresh, ttl_seconds)
-    return fresh, False

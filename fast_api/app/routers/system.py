@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db
 from app.infra.redis_client import get_optional_redis
@@ -20,11 +20,11 @@ def health():
 
 
 @router.get("/health/ready")
-async def ready(response: Response, db: Session = Depends(get_db), redis=Depends(get_optional_redis)):
+async def ready(response: Response, db: AsyncSession = Depends(get_db), redis=Depends(get_optional_redis)):
     """Readiness: Postgres is required (503 without it). Redis is optional because we fail open."""
     checks = {}
     try:
-        db.execute(text("select 1"))
+        await db.execute(text("select 1"))
         checks["postgres"] = "ok"
     except Exception:
         checks["postgres"] = "down"

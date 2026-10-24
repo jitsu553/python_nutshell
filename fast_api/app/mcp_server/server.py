@@ -4,7 +4,9 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
-from app.infra.database import SessionLocal
+from sqlalchemy import select
+
+from app.infra.database import AsyncSessionLocal
 from app.models.auth import User
 from app.core.config import get_settings
 
@@ -29,12 +31,13 @@ class BearerAuth:
 
 
 @mcp.tool()
-def get_employee_details(email: str) -> str:
+async def get_employee_details(email: str) -> str:
     """Look up employees' role and account status. Accepts a full email or just a
     name such as 'alice'. Only the part before '@' is matched, so never guess a domain."""
-    db = SessionLocal()
-    try:
-        users = db.query(User).filter(User.email.ilike(f"{email.split('@')[0]}%")).limit(5).all()
+    async with AsyncSessionLocal() as db:
+        users = (await db.scalars(
+            select(User).where(User.email.ilike(f"{email.split('@')[0]}%")).limit(5)
+        )).all()
         if not users:
             return f"No employee found matching '{email}'."
         return "\n".join(
@@ -42,8 +45,6 @@ def get_employee_details(email: str) -> str:
             f"status: {'active' if u.is_active else 'inactive'}, member since {u.created_at.date()}."
             for u in users
         )
-    finally:
-        db.close()
 
 
 if __name__ == "__main__":

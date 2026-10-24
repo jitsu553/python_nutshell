@@ -4,17 +4,14 @@ from pathlib import Path
 def extract_text(file_path: Path, content_type: str) -> str:
     """
     Dispatch to the correct extractor based on content type.
-    Returns plain text string. Returns empty string on failure.
+    Returns plain text; raises on a corrupt file so the index job can retry.
     """
-    try:
-        if content_type == "application/pdf":
-            return _extract_pdf(file_path)
-        if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            return _extract_docx(file_path)
-        if content_type == "text/plain":
-            return _extract_txt(file_path)
-    except Exception:
-        return ""
+    if content_type == "application/pdf":
+        return _extract_pdf(file_path)
+    if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        return _extract_docx(file_path)
+    if content_type == "text/plain":
+        return _extract_txt(file_path)
     return ""
 
 

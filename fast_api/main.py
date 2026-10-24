@@ -9,20 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app import models as _models  # noqa: F401  registers every table with Base
-from app.infra.database import init_db
+from app.infra.database import async_engine, init_db
 from app.routers.system import router as system_router
 from app.routers.auth import router as auth_router
 from app.routers.aggregator import router as external_aggregator_router
 from app.infra.redis_client import connect_redis, close_redis
-from app.routers.redis import router as redis_lab_router
+from app.services.documents.indexer import start_workers, stop_workers
 from app.routers.documents import router as document_router
 from app.services.llm.client import connect_llm_client, close_llm_client 
 from app.routers.llm_chat import router as llm_chat_router
 from app.services.llm.graph import connect_checkpointer, close_checkpointer
 from app.routers.tickets import router as ticket_router
 from app.routers.customers import router as customer_router
-
-from app.infra.database import engine
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -44,11 +42,11 @@ app.add_middleware(
 print("Starting FastAPI application...")
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     # Keep API docs available even when DB is temporarily unavailable.
     try:
         # auth_models.User.metadata.create_all(bind=engine)
-        init_db()
+        await init_db()
         pass
     except Exception as exc:
         logger.warning("Database init skipped during startup: %s", exc)
@@ -83,6 +81,13 @@ async def startup_llm_client():
         logger.warning("LLM Client connection skipped during startup: %s", exc)
 
 @app.on_event("startup")
+async def startup_document_workers():
+    try:
+        await start_workers(app)
+    except Exception as exc:
+        logger.warning("Document index workers not started: %s", exc)
+
+@app.on_event("startup")
 async def startup_checkpointer():
     try:
         await connect_checkpointer(app)
@@ -101,6 +106,11 @@ async def shutdown_external_aggregator():
             logger.info("Closed shared HTTP client")
         except Exception as exc:
             logger.error(f"Error closing HTTP client: {exc}")
+
+@app.on_event("shutdown")
+async def shutdown_document_workers():
+    await stop_workers(app)
+    await async_engine.dispose()
 
 @app.on_event("shutdown")
 async def shutdown_redis():
@@ -130,7 +140,6 @@ async def shutdown_checkpointer():
 app.include_router(system_router)
 app.include_router(auth_router)
 app.include_router(external_aggregator_router)
-app.include_router(redis_lab_router)
 app.include_router(document_router)
 app.include_router(llm_chat_router)
 app.include_router(ticket_router)

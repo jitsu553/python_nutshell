@@ -28,6 +28,7 @@ class ChatSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="ChatMessage.id",
+        lazy="selectin",
     )
 
 

@@ -1,10 +1,13 @@
 # app/auth/router.py
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import JWTError
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.dependencies import get_current_user, get_db
 from app.models.auth import Role, Session as DBSession, User
 from app.schemas.auth import (
@@ -48,28 +51,28 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str 
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # 1. Check if user already exists
-    existing = db.query(User).filter(User.email == body.email).first()
+    existing = await db.scalar(select(User).where(User.email == body.email))
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     # 2. Get or create the requested role (defaults to "user")
-    role = db.query(Role).filter(Role.name == body.role).first()
+    role = await db.scalar(select(Role).where(Role.name == body.role))
     if not role:
         role = Role(name=body.role)
         db.add(role)
-        db.flush()  # flush to get role.id without committing yet
+        await db.flush()  # flush to get role.id without committing yet
 
-    # 3. Hash password and create user
+    # 3. Hash password (bcrypt is CPU-heavy, so off the event loop) and create user
     new_user = User(
         email=body.email,
-        hashed_password=hash_password(body.password),
+        hashed_password=await asyncio.to_thread(hash_password, body.password),
         role_id=role.id,
     )
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    await db.commit()
+    await db.refresh(new_user)
 
     return UserResponse(
         id=new_user.id,
@@ -80,10 +83,10 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
+async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     # 1. Find user
-    user = db.query(User).filter(User.email == body.email).first()
-    if not user or not verify_password(body.password, user.hashed_password):
+    user = await db.scalar(select(User).where(User.email == body.email))
+    if not user or not await asyncio.to_thread(verify_password, body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not user.is_active:
@@ -101,7 +104,7 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
         expires_at=expires_at,
     )
     db.add(session)
-    db.commit()
+    await db.commit()
 
     _set_auth_cookies(response=response, access_token=access_token, refresh_token=refresh_token)
 
@@ -109,11 +112,11 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
-def refresh(
+async def refresh(
     request: Request,
     response: Response,
     body: RefreshRequest | None = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     credentials_exception = HTTPException(status_code=401, detail="Invalid refresh token")
     refresh_token = body.refresh_token if body else request.cookies.get("refresh_token")
@@ -131,15 +134,13 @@ def refresh(
         raise credentials_exception
 
     # 2. Verify it exists in DB and is not expired
-    session = db.query(DBSession).filter(
-        DBSession.refresh_token == refresh_token
-    ).first()
+    session = await db.scalar(select(DBSession).where(DBSession.refresh_token == refresh_token))
 
     if not session or session.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise credentials_exception
 
     # 3. Find user and issue new access token
-    user = db.query(User).filter(User.email == email).first()
+    user = await db.scalar(select(User).where(User.email == email))
     if not user or not user.is_active:
         raise credentials_exception
 
@@ -151,7 +152,7 @@ def refresh(
 
 
 @router.get("/profile", response_model=UserResponse)
-def profile(current_user: User = Depends(get_current_user)):
+async def profile(current_user: User = Depends(get_current_user)):
     """
     Protected route — no DB query needed here.
     get_current_user already fetched the user from DB via the token.

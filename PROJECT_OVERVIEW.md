@@ -61,12 +61,13 @@ external_api_aggregator   (isolated)
 
 1. **Chat is not user-owned.** `ChatSession` has no `user_id`. `POST /sessions`, `GET /sessions/{id}/messages`, `/embeddings`, `/similarity`, `/store`, `/search`, and `/ask` need no login. Anyone can read any session by id.
 2. **RAG is not user-scoped.** `find_similar` and `TextEmbedding` have no owner filter, so `search_documents` can return another user's document text. Documents are per-user, but their vectors are global.
-3. **Two parallel indexing paths.** `document_service` has its own extract, index-queue, and retry/dead-letter flow (`DocumentText`). `llm_chat` has a separate `POST /documents/{id}/index` that chunks and embeds into `TextEmbedding`. They should be one pipeline: upload, extract, chunk, embed, searchable.
+3. **Indexing pipeline unified.** Upload and reindex enqueue onto a Redis list; in-app workers (`services/documents/indexer.py`) extract, chunk, embed, and store into `TextEmbedding`.
 4. **`require_role` is currently a no-op.** The uncommitted line `return current_user` sits before the role check, so every "admin" route is open to any logged-in user. Revert it before anything else.
 5. **Two MCP worlds.** `tools.py` has an in-process `get_employee_details`, and `server.py` has a copy that goes over MCP. The agent only uses the MCP one. One of them is dead weight.
 6. **Redis and the aggregator are islands.** Their patterns (caching, circuit breaker, health) could serve the LLM tools, but nothing connects them.
 7. **Startup wiring is repetitive.** `main.py` has 4 startup and 4 shutdown hooks (deprecated `on_event`; `lifespan` is the modern form). Each module also builds its own `get_db` or settings access.
 8. **Housekeeping.** `print()` debugging in `graph.py` and `rate_limit.py`, `Base.metadata.create_all` instead of Alembic migrations (alembic is installed and configured but not driving schema), no tests.
+9. **Async end to end.** All DB access uses one async engine (`AsyncSessionLocal`, psycopg 3) with `expire_on_commit=False`; `get_db` is async and the `User.role`, `ChatSession.messages`, `Document.text_entry` relationships load eagerly (`lazy="selectin"`). Agent tools open their own short session because the agent can run tool calls concurrently. bcrypt and text extraction run in threads.
 
 ## 5. Proposed direction: an "IT helpdesk assistant" as the single product
 

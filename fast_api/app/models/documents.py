@@ -7,9 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
-    Table,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -42,10 +40,16 @@ class Document(Base):
         back_populates="document",
         uselist=False,
         cascade="all, delete-orphan",
+        lazy="selectin",
     )
     is_deleted = Column(Boolean, nullable=False, default=False, index=True)
     deleted_at = Column(DateTime, nullable=True)
     deleted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    @property
+    def index_status(self) -> str | None:
+        # pending -> processing -> done | failed (retried) | dead (gave up)
+        return self.text_entry.status if self.text_entry else None
 
 
 class DocumentText(Base):
@@ -66,23 +70,5 @@ class DocumentText(Base):
     status = Column(String(20), nullable=False, default="pending", index=True)
     last_error = Column(String(1000), nullable=True)
     attempts = Column(Integer, nullable=False, default=0)
+    # Lease/retry deadline: a sweeper re-queues active rows once this passes
     next_retry_at = Column(DateTime, nullable=True, index=True)
-    dead_at = Column(DateTime, nullable=True)
-
-class DocumentTag(Base):
-    __tablename__ = "document_tags"
-    __table_args__ = (
-        UniqueConstraint("document_id", "tag", name="uq_document_tag"),
-    )
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    document_id = Column(
-        Integer,
-        ForeignKey("documents.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    tag = Column(String(64), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    document = relationship("Document", backref="tags")      

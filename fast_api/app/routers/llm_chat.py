@@ -1,5 +1,5 @@
 import json
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import httpx
@@ -21,7 +21,7 @@ from app.schemas.llm_chat import (
     )
 from app.services.llm.service import (
     ChatService, build_payload, embed_texts, find_similar, 
-    store_embedding, index_document_chunks, answer_with_context,
+    store_embedding, answer_with_context,
     stream_chat_completion, format_sse, bind_overrides, build_prompt_messages,
     llm_error_detail
 )
@@ -80,12 +80,12 @@ async def send_prompt_stream(
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/sessions", response_model=SessionResponse)
-def create_chat_session(
+async def create_chat_session(
     body: CreateSessionRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> ChatSession:
-    return ChatService(db, current_user=current_user).create_session(body)
+    return await ChatService(db, current_user=current_user).create_session(body)
 
 
 @router.post(
@@ -97,7 +97,7 @@ async def send_chat_message(
     session_id: int,
     body: SendMessageRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
     checkpointer = Depends(get_checkpointer),
@@ -111,12 +111,12 @@ async def send_chat_message(
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
-def get_chat_messages(
+async def get_chat_messages(
     session_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    return ChatService(db, current_user=current_user).list_messages(session_id)
+    return await ChatService(db, current_user=current_user).list_messages(session_id)
 
 
 @router.post("/embeddings", response_model=EmbedResponse)
@@ -138,13 +138,13 @@ async def compare_similarity(
 @router.post("/store", response_model=IngestResponse)
 async def ingest_texts(
     body: EmbedRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
 ) -> IngestResponse:
     embed_result = await embed_texts(body, embeddings)
     texts = body.input if isinstance(body.input, list) else [body.input]
     stored_ids = [
-        store_embedding(db, text, vector, embed_result.model).id
+        (await store_embedding(db, text, vector, embed_result.model)).id
         for text, vector in zip(texts, embed_result.embeddings)
     ]
     return IngestResponse(stored_ids=stored_ids)
@@ -153,11 +153,11 @@ async def ingest_texts(
 @router.post("/search", response_model=SearchResponse)
 async def search_texts(
     body: SearchRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
 ) -> SearchResponse:
     embed_result = await embed_texts(EmbedRequest(input=body.query), embeddings)
-    matches = find_similar(db, embed_result.embeddings[0], limit=body.limit)
+    matches = await find_similar(db, embed_result.embeddings[0], limit=body.limit)
     return SearchResponse(
         query=body.query,
         results=[
@@ -167,25 +167,15 @@ async def search_texts(
         ],
     )
 
-@router.post("/documents/{document_id}/index")
-async def index_document_for_search(
-    document_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
-):
-    rows = await index_document_chunks(db, document_id, current_user, embeddings)
-    return {"document_id": document_id, "chunks_indexed": len(rows)}
-
 @router.post("/ask", response_model=RagAskResponse)
 async def ask_with_rag(
     body: RagAskRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
 ) -> RagAskResponse:
     embed_result = await embed_texts(EmbedRequest(input=body.question), embeddings)
-    matches = find_similar(
+    matches = await find_similar(
         db,
         embed_result.embeddings[0],
         limit=body.limit,
@@ -219,7 +209,7 @@ async def decide_approval(
     approval_id: int,
     body: ApprovalDecisionRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     llm: ChatOpenAI = Depends(get_llm_client),
     embeddings: OpenAIEmbeddings = Depends(get_embeddings_client),
     checkpointer = Depends(get_checkpointer),
@@ -229,8 +219,8 @@ async def decide_approval(
     return await service.resolve_approval(session_id, approval_id, body.approved, body.reason)
 
 @router.get("/approvals/pending", response_model=list[PendingApprovalResponse])
-def list_pending_approvals(
+async def list_pending_approvals(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    return ChatService(db, current_user=current_user).list_pending_approvals()
+    return await ChatService(db, current_user=current_user).list_pending_approvals()

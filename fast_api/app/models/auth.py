@@ -27,7 +27,7 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
-    role = relationship("Role", back_populates="users")
+    role = relationship("Role", back_populates="users", lazy="selectin")
 
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
 

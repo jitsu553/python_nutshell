@@ -54,12 +54,12 @@ def build_agent_graph(llm: ChatOpenAI, tools: list, checkpointer,
                  usage.get("output_tokens"), [c["name"] for c in response.tool_calls])
         return {"messages": [response]}
 
-    def precheck(call: dict) -> str | None:
+    async def precheck(call: dict) -> str | None:
         fn = prechecks.get(call["name"])
         if fn is None:
             return None
         try:
-            return fn(call["args"])
+            return await fn(call["args"])
         except Exception as e:  # missing or unexpected arguments
             return f"Invalid arguments for {call['name']}: {e}"
 
@@ -69,7 +69,7 @@ def build_agent_graph(llm: ChatOpenAI, tools: list, checkpointer,
         if not risky:
             return {}
         humans = [str(m.content).lower() for m in state["messages"] if m.type == "human"][-3:]
-        errors = {c["id"]: err for c in risky if (err := not_asked(c["name"], humans) or precheck(c))}
+        errors = {c["id"]: err for c in risky if (err := not_asked(c["name"], humans) or await precheck(c))}
         if errors:  # doomed action: skip the human, let the model fix it
             return {"messages": [
                 ToolMessage(content=errors.get(c["id"], "Not run: another action in this step was "

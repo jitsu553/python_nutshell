@@ -2,24 +2,22 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth import User
 from app.core.security import decode_token
-from app.infra.database import SessionLocal
+from app.infra.database import AsyncSessionLocal
+
 
 # --- DB dependency ---
-def get_db():
+async def get_db():
     """
-    Yields a database session, then closes it after the request finishes.
+    Yields an async database session, then closes it after the request finishes.
     FastAPI calls this automatically for any route that declares it as a dependency.
-    The 'yield' makes it a context manager — cleanup happens after the response.
     """
-    db = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as db:
         yield db
-    finally:
-        db.close()
 
 
 # --- Token extractor ---
@@ -27,9 +25,9 @@ def get_db():
 bearer_scheme = HTTPBearer()
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     """
     Extracts and validates the access token from the Authorization header.
@@ -51,7 +49,7 @@ def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    user = db.query(User).filter(User.email == email).first()
+    user = await db.scalar(select(User).where(User.email == email))
     if user is None or not user.is_active:
         raise credentials_exception
 

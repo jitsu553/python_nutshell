@@ -26,8 +26,6 @@ ALLOWED_CONTENT_TYPES = {
     ".txt": {"text/plain", "application/octet-stream"},
 }
 
-INDEX_DEAD_STATUS = "dead"
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -44,9 +42,6 @@ class Settings(BaseSettings):
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
-    default_cache_ttl_seconds: int = 60
-    session_ttl_seconds: int = 1800
-    pubsub_channel: str = "events:demo"
 
     # --- LLM / MCP ---
     llm_base_url: str = "http://localhost:11434/v1"
@@ -69,16 +64,16 @@ class Settings(BaseSettings):
     documents_max_file_size_bytes: int = 10 * 1024 * 1024
     documents_max_filename_length: int = 180
     documents_signature_read_bytes: int = 4096
-    documents_retention_days_soft_deleted: int = 30
     documents_storage_backend: str = "local"
     documents_s3_bucket_name: str = ""
     documents_s3_region: str = "ap-south-1"
     documents_s3_endpoint_url: str | None = None
     documents_s3_presigned_ttl_seconds: int = 300
-    documents_index_queue_batch_size: int = 20
     documents_index_max_attempts: int = 5
     documents_index_retry_base_seconds: int = 30
-    documents_index_retry_max_seconds: int = 900
+    documents_index_workers: int = 3  # parallel indexing jobs per pod
+    documents_index_lease_seconds: int = 600  # a job not finished by then is re-queued
+    documents_index_sweep_seconds: int = 30
 
     # --- External API aggregator ---
     external_aggregator_http_connect_timeout: float = 3.0

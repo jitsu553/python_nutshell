@@ -1,7 +1,8 @@
 
 from fastapi import HTTPException
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 import json
 import openai
@@ -20,11 +21,7 @@ from langgraph.prebuilt.tool_node import ToolInvocationError
 from app.core.config import get_settings
 from app.models.llm_chat import ChatMessage, ChatSession, TextEmbedding, UserMemory, PendingApproval
 from app.schemas.llm_chat import CreateSessionRequest, PromptRequest, EmbedRequest, EmbedResponse
-from app.infra.database import SessionLocal
-from app.services.documents.service import DocumentService
-from app.services.documents.storage import LocalDocumentStorage
 from app.models.auth import User
-from app.services.llm.utils.chunking import chunk_text
 from app.services.llm.tool_registry import user_may_use
 from app.services.llm.tools import ( calculate, make_search_documents_tool, 
                     make_web_search_tool, make_create_ticket_tool, 
@@ -220,8 +217,8 @@ async def embed_texts(body: EmbedRequest, embeddings: OpenAIEmbeddings) -> Embed
     )
 
 
-def store_embedding(
-    db: Session,
+async def store_embedding(
+    db: AsyncSession,
     text: str,
     vector: list[float],
     model: str,
@@ -236,50 +233,28 @@ def store_embedding(
         chunk_index=chunk_index,
     )
     db.add(row)
-    db.commit()
-    db.refresh(row)
+    await db.commit()
+    await db.refresh(row)
     return row
 
 
-def find_similar(
-    db: Session,
+async def find_similar(
+    db: AsyncSession,
     query_vector: list[float],
     limit: int = 5,
     document_id: int | None = None,
     min_similarity: float | None = None,
 ) -> list[tuple[TextEmbedding, float]]:
     distance_expr = TextEmbedding.embedding.cosine_distance(query_vector)
-    query = db.query(TextEmbedding, distance_expr)
+    query = select(TextEmbedding, distance_expr)
 
     if document_id is not None:
-        query = query.filter(TextEmbedding.document_id == document_id)
+        query = query.where(TextEmbedding.document_id == document_id)
     if min_similarity is not None:
-        query = query.filter(distance_expr <= 1 - min_similarity)
+        query = query.where(distance_expr <= 1 - min_similarity)
 
-    rows = query.order_by(distance_expr).limit(limit).all()
+    rows = (await db.execute(query.order_by(distance_expr).limit(limit))).all()
     return [(row_embedding, 1 - distance) for row_embedding, distance in rows]
-
-async def index_document_chunks(
-    db: Session,
-    document_id: int,
-    current_user: User,
-    embeddings: OpenAIEmbeddings,
-) -> list[TextEmbedding]:
-    doc_service = DocumentService(db=db, storage=LocalDocumentStorage())
-    document, text, _source = doc_service.get_or_index_text(document_id, current_user)
-
-    chunks = chunk_text(text)
-    if not chunks:
-        return []
-
-    embed_result = await embed_texts(EmbedRequest(input=chunks), embeddings)
-
-    return [
-        store_embedding(db, chunk, vector, embed_result.model, document_id=document.id, chunk_index=index)
-        for index, (chunk, vector) in enumerate(zip(chunks, embed_result.embeddings))
-    ]
-
-
 
 def build_rag_context(chunks: list[TextEmbedding]) -> str:
     return "\n\n".join(f"[{i + 1}] {chunk.source_text}" for i, chunk in enumerate(chunks))
@@ -322,7 +297,7 @@ async def summarize_messages(messages: list[dict], llm: ChatOpenAI) -> str:
     result = await llm.ainvoke([SystemMessage(content=SUMMARY_SYSTEM_PROMPT), HumanMessage(content=transcript)])
     return str(result.content)
 
-async def maybe_compact_history(db: Session, session: ChatSession, llm: ChatOpenAI) -> None:
+async def maybe_compact_history(db: AsyncSession, session: ChatSession, llm: ChatOpenAI) -> None:
     settings = get_settings()
     if session.summarized_through_message_id is not None:
         new_messages = [m for m in session.messages if m.id > session.summarized_through_message_id]
@@ -345,7 +320,7 @@ async def maybe_compact_history(db: Session, session: ChatSession, llm: ChatOpen
 
     session.summary = await summarize_messages(messages_to_summarize, llm)
     session.summarized_through_message_id = to_summarize[-1].id
-    db.commit()
+    await db.commit()
 
 def tool_kwargs(name: str, db, client: httpx.AsyncClient) -> dict:
     return {"db": db, "client": client} if name == "search_documents" else {}
@@ -358,17 +333,14 @@ def message_to_wire(message: ChatMessage) -> dict:
         wire["tool_call_id"] = message.tool_call_id
     return wire
 
-def get_user_memories(db: Session, user_id: int, limit: int = 20) -> list[UserMemory]:
-    return (
-        db.query(UserMemory)
-        .filter(UserMemory.user_id == user_id)
-        .order_by(UserMemory.id.desc())
-        .limit(limit)
-        .all()
+async def get_user_memories(db: AsyncSession, user_id: int, limit: int = 20) -> list[UserMemory]:
+    result = await db.scalars(
+        select(UserMemory).where(UserMemory.user_id == user_id).order_by(UserMemory.id.desc()).limit(limit)
     )
+    return list(result)
 
 class ChatService:
-    def __init__(self, db: Session, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None, current_user: User | None = None, checkpointer=None, redis=None):
+    def __init__(self, db: AsyncSession, llm: ChatOpenAI | None = None, embeddings: OpenAIEmbeddings | None = None, current_user: User | None = None, checkpointer=None, redis=None):
         self.db = db
         self.llm = llm
         self.embeddings = embeddings
@@ -376,45 +348,55 @@ class ChatService:
         self.checkpointer = checkpointer
         self.redis = redis
 
-    def create_session(self, body: CreateSessionRequest) -> ChatSession:
+    async def create_session(self, body: CreateSessionRequest) -> ChatSession:
         session = ChatSession(
             title=body.title, system_prompt=body.system_prompt, temperature=body.temperature,
             max_tokens=body.max_tokens, use_rag=body.use_rag, use_tools=body.use_tools,
             rag_document_id=body.rag_document_id, user_id=self.current_user.id,
         )
         self.db.add(session)
-        self.db.commit()
-        self.db.refresh(session)
+        await self.db.commit()
+        await self.db.refresh(session)
         return session
 
-    def get_session_or_404(self, session_id: int) -> ChatSession:
-        session = (self.db.query(ChatSession)
-                   .filter(ChatSession.id == session_id, ChatSession.user_id == self.current_user.id)
-                   .first())
+    async def get_session_or_404(self, session_id: int) -> ChatSession:
+        session = await self.db.scalar(
+            select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == self.current_user.id)
+        )
         if session is None:
             raise HTTPException(status_code=404, detail="Chat session not found")
         return session
 
-    def list_messages(self, session_id: int) -> list[ChatMessage]:
-        return self.get_session_or_404(session_id).messages
+    async def list_messages(self, session_id: int) -> list[ChatMessage]:
+        return (await self.get_session_or_404(session_id)).messages
+
+    async def _add_user_message(self, session: ChatSession, content: str) -> ChatMessage:
+        user_message = ChatMessage(session_id=session.id, role="user", content=content)
+        self.db.add(user_message)
+        await self.db.commit()
+        await self.db.refresh(user_message)
+        # nothing expires on commit, so reload the history to include the new message
+        await self.db.refresh(session, ["messages"])
+        return user_message
 
     async def build_tools(self, session: ChatSession) -> list:
         if not session.use_tools:
             return []
-        tools = [calculate, make_search_documents_tool(self.db, self.embeddings), make_web_search_tool(self.db, self.redis)]
+        # each tool opens its own DB session: the agent may run several tool calls at once
+        tools = [calculate, make_search_documents_tool(self.embeddings), make_web_search_tool(self.redis)]
         if self.current_user is not None:
-            tools.append(make_create_ticket_tool(self.db, self.current_user))
-            tools.append(make_remember_tool(self.db, self.current_user))
-            tools.append(make_get_customer_tool(self.db))
-            tools.append(make_list_customer_tickets_tool(self.db))
-            tools.append(make_get_ticket_tool(self.db))
-            tools.append(make_update_ticket_status_tool(self.db))
-            tools.append(make_send_email_tool(self.db, self.current_user))
-            tools.append(make_refund_customer_tool(self.db, self.current_user))
-            tools.append(make_delete_ticket_tool(self.db, self.current_user))
-            tools.append(make_schedule_meeting_tool(self.db, self.current_user))
-            tools.append(make_list_customer_orders_tool(self.db))
-            tools.append(make_cancel_order_tool(self.db, self.current_user))
+            tools.append(make_create_ticket_tool(self.current_user))
+            tools.append(make_remember_tool(self.current_user))
+            tools.append(make_get_customer_tool())
+            tools.append(make_list_customer_tickets_tool())
+            tools.append(make_get_ticket_tool())
+            tools.append(make_update_ticket_status_tool())
+            tools.append(make_send_email_tool(self.current_user))
+            tools.append(make_refund_customer_tool(self.current_user))
+            tools.append(make_delete_ticket_tool(self.current_user))
+            tools.append(make_schedule_meeting_tool(self.current_user))
+            tools.append(make_list_customer_orders_tool())
+            tools.append(make_cancel_order_tool(self.current_user))
             if self.current_user.role is not None:
                 try:
                     mcp_tools = await _mcp_client.get_tools(server_name="llm-chat-tools")
@@ -437,7 +419,7 @@ class ChatService:
             messages.append({"role": "system", "content": session.system_prompt})
 
         if self.current_user is not None:
-            memories = get_user_memories(self.db, self.current_user.id)
+            memories = await get_user_memories(self.db, self.current_user.id)
             if memories:
                 facts = "\n".join(f"- {m.content}" for m in reversed(memories))
                 messages.append({
@@ -447,7 +429,7 @@ class ChatService:
 
         if session.use_rag:
             embed_result = await embed_texts(EmbedRequest(input=content), self.embeddings)
-            matches = find_similar(
+            matches = await find_similar(
                 self.db, embed_result.embeddings[0], limit=5,
                 document_id=session.rag_document_id, min_similarity=0.5,
             )
@@ -482,23 +464,22 @@ class ChatService:
     async def _build_agent(self, session: ChatSession):
         llm = bind_overrides(self.llm, session.temperature, session.max_tokens)
         return build_agent_graph(llm, await self.build_tools(session), self.checkpointer,
-                                 make_prechecks(self.db, self.current_user), self._on_tool_error)
+                                 make_prechecks(self.current_user), self._on_tool_error)
 
     def _on_tool_error(self, e: Exception) -> str:
         if isinstance(e, ToolInvocationError):
             return e.message  # bad arguments from the model: let it self-correct
-        self.db.rollback()  # a failed commit leaves the session unusable
         logging.getLogger(__name__).exception("tool failed", exc_info=e)
         return "The tool failed with an internal error. Tell the user it failed; do not retry the same call."
 
-    def _assistant_note(self, session: ChatSession, text: str) -> ChatMessage:
+    async def _assistant_note(self, session: ChatSession, text: str) -> ChatMessage:
         note = ChatMessage(session_id=session.id, role="assistant", content=text, finish_reason="step_limit")
         self.db.add(note)
-        self.db.commit()
-        self.db.refresh(note)
+        await self.db.commit()
+        await self.db.refresh(note)
         return note
 
-    def _record_approval(self, session: ChatSession, thread_id: str, result: dict,
+    async def _record_approval(self, session: ChatSession, thread_id: str, result: dict,
                          input_message_count: int) -> PendingApproval:
         payload = result["__interrupt__"][0].value
         approval = PendingApproval(
@@ -511,13 +492,13 @@ class ChatService:
             input_message_count=input_message_count,
         )
         self.db.add(approval)
-        self.db.commit()
-        self.db.refresh(approval)
+        await self.db.commit()
+        await self.db.refresh(approval)
         log.info("approval_requested id=%s session=%s tool=%s user=%s",
                  approval.id, session.id, approval.tool_name, approval.requested_by_id)
         return approval
 
-    def _save_new_messages(self, session: ChatSession, new_msgs: list) -> ChatMessage | None:
+    async def _save_new_messages(self, session: ChatSession, new_msgs: list) -> ChatMessage | None:
         """The only place a finished turn is written to chat_messages."""
         last_ai = None
         for msg in new_msgs:
@@ -533,30 +514,28 @@ class ChatService:
                     session_id=session.id, role="tool", content=str(msg.content),
                     tool_call_id=msg.tool_call_id,
                 ))
-        self.db.commit()
+        await self.db.commit()
         if last_ai:
-            self.db.refresh(last_ai)
+            await self.db.refresh(last_ai)
         log.info("turn_saved session=%s tools=%s", session.id,
                  [m.name for m in new_msgs if m.type == "tool"])
         return last_ai
 
-    def list_pending_approvals(self) -> list[PendingApproval]:
+    async def list_pending_approvals(self) -> list[PendingApproval]:
         # ponytail: own sessions only; supervisors approving other people's sessions comes later
-        return (self.db.query(PendingApproval)
-                .join(ChatSession, ChatSession.id == PendingApproval.session_id)
-                .filter(ChatSession.user_id == self.current_user.id,
-                        PendingApproval.status == "pending",
-                        PendingApproval.created_at > datetime.utcnow() - APPROVAL_TTL)
-                .order_by(PendingApproval.created_at)
-                .all())          
+        result = await self.db.scalars(
+            select(PendingApproval)
+            .join(ChatSession, ChatSession.id == PendingApproval.session_id)
+            .where(ChatSession.user_id == self.current_user.id,
+                   PendingApproval.status == "pending",
+                   PendingApproval.created_at > datetime.utcnow() - APPROVAL_TTL)
+            .order_by(PendingApproval.created_at)
+        )
+        return list(result)
 
     async def send_message(self, session_id: int, content: str) -> ChatMessage:
-        session = self.get_session_or_404(session_id)
-
-        user_message = ChatMessage(session_id=session.id, role="user", content=content)
-        self.db.add(user_message)
-        self.db.commit()
-        self.db.refresh(user_message)
+        session = await self.get_session_or_404(session_id)
+        user_message = await self._add_user_message(session, content)
 
         messages = await self.build_session_messages(session, content)
 
@@ -570,20 +549,16 @@ class ChatService:
         except openai.APIError as exc:
             raise HTTPException(status_code=502, detail=llm_error_detail(exc))
         except GraphRecursionError:
-            return self._assistant_note(session, STEP_LIMIT_REPLY)
+            return await self._assistant_note(session, STEP_LIMIT_REPLY)
 
         if result.get("__interrupt__"):
-            return self._record_approval(session, thread_id, result, len(messages))
+            return await self._record_approval(session, thread_id, result, len(messages))
 
-        return self._save_new_messages(session, result["messages"][len(messages):])
+        return await self._save_new_messages(session, result["messages"][len(messages):])
     
     async def send_message_stream(self, session_id: int, content: str):
-        session = self.get_session_or_404(session_id)
-
-        user_message = ChatMessage(session_id=session.id, role="user", content=content)
-        self.db.add(user_message)
-        self.db.commit()
-        self.db.refresh(user_message)
+        session = await self.get_session_or_404(session_id)
+        user_message = await self._add_user_message(session, content)
 
         messages = await self.build_session_messages(session, content)
         agent = await self._build_agent(session)
@@ -591,7 +566,7 @@ class ChatService:
         thread_id = f"session-{session.id}-turn-{user_message.id}"
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
 
-        async def event_generator():
+        async def _events():
             approval = None
             try:
                 async for mode, data in agent.astream(
@@ -604,7 +579,7 @@ class ChatService:
                     else:  # "updates": {node_name: state_update}
                         for node, update in data.items():
                             if node == "__interrupt__":
-                                approval = self._record_approval(session, thread_id, data, len(messages))
+                                approval = await self._record_approval(session, thread_id, data, len(messages))
                                 yield format_sse({
                                     "id": approval.id, "session_id": approval.session_id,
                                     "tool_name": approval.tool_name, "tool_args": approval.tool_args,
@@ -618,7 +593,7 @@ class ChatService:
                 yield format_sse({"detail": llm_error_detail(exc)}, event="stream_error")
                 return
             except GraphRecursionError:
-                self._assistant_note(session, STEP_LIMIT_REPLY)
+                await self._assistant_note(session, STEP_LIMIT_REPLY)
                 yield format_sse({"detail": STEP_LIMIT_REPLY}, event="stream_error")
                 return
 
@@ -627,18 +602,24 @@ class ChatService:
                 return
             # ponytail: saved only at the end, so a client disconnect mid-stream loses the reply
             state = await agent.aget_state(config)
-            saved = self._save_new_messages(session, state.values["messages"][len(messages):])
+            saved = await self._save_new_messages(session, state.values["messages"][len(messages):])
             yield format_sse({"finish_reason": saved.finish_reason if saved else None,
                               "message_id": saved.id if saved else None}, event="done")
+
+        async def event_generator():
+            # FastAPI closes the request session before streaming starts; release it again at the end
+            try:
+                async for chunk in _events():
+                    yield chunk
+            finally:
+                await self.db.close()
 
         return event_generator()
 
     async def resolve_approval(self, session_id: int, approval_id: int, approved: bool, reason: str = "") -> ChatMessage | PendingApproval:
-        session = self.get_session_or_404(session_id)
-        approval = (
-            self.db.query(PendingApproval)
-            .filter(PendingApproval.id == approval_id, PendingApproval.session_id == session_id)
-            .first()
+        session = await self.get_session_or_404(session_id)
+        approval = await self.db.scalar(
+            select(PendingApproval).where(PendingApproval.id == approval_id, PendingApproval.session_id == session_id)
         )
         if approval is None:
             raise HTTPException(status_code=404, detail="Approval not found")
@@ -647,7 +628,7 @@ class ChatService:
 
         if datetime.utcnow() - approval.created_at > APPROVAL_TTL:
             approval.status = "expired"
-            self.db.commit()
+            await self.db.commit()
             raise HTTPException(status_code=410, detail="Approval expired. Ask the agent again.")
 
         agent = await self._build_agent(session)
@@ -659,13 +640,15 @@ class ChatService:
                 raise HTTPException(status_code=403, detail=f"Approving '{call['name']}' requires a higher role")
 
         # claim first: a double click or retry must never resume (and run the tool) twice
-        claimed = (self.db.query(PendingApproval)
-                   .filter(PendingApproval.id == approval.id, PendingApproval.status == "pending")
-                   .update({"status": "approved" if approved else "rejected",
-                            "decided_by_id": self.current_user.id if self.current_user else None,
-                            "decided_at": datetime.utcnow()}))
-        self.db.commit()
-        if claimed != 1:
+        claim = await self.db.execute(
+            update(PendingApproval)
+            .where(PendingApproval.id == approval.id, PendingApproval.status == "pending")
+            .values(status="approved" if approved else "rejected",
+                    decided_by_id=self.current_user.id if self.current_user else None,
+                    decided_at=datetime.utcnow())
+        )
+        await self.db.commit()
+        if claim.rowcount != 1:
             raise HTTPException(status_code=409, detail="Approval already decided")
 
         log.info("approval_decided id=%s approved=%s by=%s", approval.id, approved,
@@ -675,9 +658,9 @@ class ChatService:
         except openai.APIError as exc:
             raise HTTPException(status_code=502, detail=llm_error_detail(exc))
         except GraphRecursionError:
-            return self._assistant_note(session, STEP_LIMIT_REPLY)
+            return await self._assistant_note(session, STEP_LIMIT_REPLY)
 
         if result.get("__interrupt__"):
-            return self._record_approval(session, approval.thread_id, result, approval.input_message_count)
+            return await self._record_approval(session, approval.thread_id, result, approval.input_message_count)
 
-        return self._save_new_messages(session, result["messages"][approval.input_message_count:])
+        return await self._save_new_messages(session, result["messages"][approval.input_message_count:])
