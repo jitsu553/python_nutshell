@@ -1,3 +1,4 @@
+from uuid import UUID, uuid4
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -30,13 +31,14 @@ class DocumentService:
             documents = []
             for upload in uploads:
                 # storage is plain file I/O (no async form), so it runs in a thread
-                f = await asyncio.to_thread(self.storage.save, upload)
-                stored.append(f)
+                document_id = uuid4()
+                f = await asyncio.to_thread(self.storage.save, upload, document_id)
+                stored.append(document_id)
                 documents.append(
                     Document(
+                        id=document_id,
                         user_id=current_user.id,
                         original_name=f.original_name,
-                        stored_name=f.stored_name,
                         content_type=f.content_type,
                         size_bytes=f.size_bytes,
                         sha256=f.sha256,
@@ -49,8 +51,8 @@ class DocumentService:
             return documents
         except Exception:
             await self.db.rollback()
-            for f in stored:
-                await asyncio.to_thread(self.storage.delete, f.stored_name)
+            for document_id in stored:
+                await asyncio.to_thread(self.storage.delete, document_id)
             raise
 
     @staticmethod
@@ -89,7 +91,7 @@ class DocumentService:
         ).all()
         return {"page": page, "page_size": page_size, "total": total, "results": results}
 
-    async def delete_document(self, document_id: int, current_user: User) -> Document:
+    async def delete_document(self, document_id: UUID, current_user: User) -> Document:
         """Soft delete; any user may delete any document."""
         document = await self.db.scalar(
             select(Document)
@@ -108,7 +110,7 @@ class DocumentService:
         log.info("document %s soft-deleted by user %s", document_id, current_user.id)
         return document
 
-    async def reset_for_reindex(self, document_ids: list[int]) -> tuple[list[int], list[int]]:
+    async def reset_for_reindex(self, document_ids: list[UUID]) -> tuple[list[UUID], list[UUID]]:
         """Mark the given documents pending again (even if done).
         Returns (ids to enqueue, ids skipped because a job is running right now)."""
         entries = (
@@ -122,7 +124,7 @@ class DocumentService:
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Documents not found: {sorted(missing)}",
+                detail=f"Documents not found: {sorted(map(str, missing))}",
             )
 
         # An expired lease means the worker died, so that row can be taken over.

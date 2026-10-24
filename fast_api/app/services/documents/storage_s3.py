@@ -1,5 +1,5 @@
 import hashlib
-import uuid
+from uuid import UUID
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,7 +16,6 @@ from app.services.documents.storage_backend import DocumentStorageBackend
 @dataclass
 class S3StoredFile:
     original_name: str
-    stored_name: str
     content_type: str
     size_bytes: int
     sha256: str
@@ -63,7 +62,7 @@ class S3DocumentStorage(DocumentStorageBackend):
             config=Config(signature_version="s3v4"),
         )
 
-    def save(self, upload: UploadFile) -> S3StoredFile:
+    def save(self, upload: UploadFile, document_id: UUID) -> S3StoredFile:
         if not upload.filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -100,7 +99,7 @@ class S3DocumentStorage(DocumentStorageBackend):
                 detail=f"File signature does not match {extension}",
             )
 
-        stored_name = f"{uuid.uuid4().hex}{extension}"
+        stored_name = str(document_id)
 
         total_size = 0
         digest = hashlib.sha256()
@@ -140,19 +139,18 @@ class S3DocumentStorage(DocumentStorageBackend):
 
         return S3StoredFile(
             original_name=original_name,
-            stored_name=stored_name,
             content_type=PREFERRED_CONTENT_TYPES[extension],
             size_bytes=total_size,
             sha256=digest.hexdigest(),
         )
 
-    def build_path(self, stored_name: str) -> Path:
+    def build_path(self, document_id: UUID) -> Path:
         # Not used in S3 mode. Kept for protocol compatibility.
-        return Path(stored_name)
+        return Path(str(document_id))
 
-    def delete(self, stored_name: str) -> None:
+    def delete(self, document_id: UUID) -> None:
         try:
-            self.client.delete_object(Bucket=self.bucket, Key=stored_name)
+            self.client.delete_object(Bucket=self.bucket, Key=str(document_id))
         except Exception:
             # Best-effort delete.
             return
@@ -160,7 +158,7 @@ class S3DocumentStorage(DocumentStorageBackend):
     def generate_download_url(
         self,
         *,
-        stored_name: str,
+        document_id: UUID,
         original_name: str,
         content_type: str,
         expires_in_seconds: int,
@@ -169,7 +167,7 @@ class S3DocumentStorage(DocumentStorageBackend):
             ClientMethod="get_object",
             Params={
                 "Bucket": self.bucket,
-                "Key": stored_name,
+                "Key": str(document_id),
                 "ResponseContentType": content_type,
                 "ResponseContentDisposition": f'attachment; filename="{original_name}"',
             },

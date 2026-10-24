@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +29,7 @@ async def list_tickets(
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
 async def get_ticket(
-    ticket_id: int,
+    ticket_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TicketResponse:
@@ -37,7 +38,7 @@ async def get_ticket(
 
 @router.patch("/{ticket_id}/status", response_model=TicketResponse)
 async def update_ticket_status(
-    ticket_id: int,
+    ticket_id: UUID,
     body: UpdateTicketStatusRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

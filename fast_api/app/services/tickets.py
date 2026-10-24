@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +25,7 @@ class TicketService:
         )
         return list(result)
 
-    async def get_ticket_or_404(self, ticket_id: int, user: User) -> Ticket:
+    async def get_ticket_or_404(self, ticket_id: UUID, user: User) -> Ticket:
         ticket = await self.db.scalar(
             select(Ticket).where(Ticket.id == ticket_id, Ticket.user_id == user.id)
         )
@@ -32,24 +33,24 @@ class TicketService:
             raise HTTPException(status_code=404, detail="Ticket not found")
         return ticket
 
-    async def update_status(self, ticket_id: int, user: User, status: str) -> Ticket:
+    async def update_status(self, ticket_id: UUID, user: User, status: str) -> Ticket:
         ticket = await self.get_ticket_or_404(ticket_id, user)
         ticket.status = status
         await self.db.commit()
         await self.db.refresh(ticket)
         return ticket
 
-    async def list_for_customer(self, customer_id: int, limit: int = 3, status: str | None = None) -> list[Ticket]:
+    async def list_for_customer(self, customer_id: UUID, limit: int = 3, status: str | None = None) -> list[Ticket]:
         query = select(Ticket).where(Ticket.customer_id == customer_id)
         if status:
             query = query.where(Ticket.status == status)
         result = await self.db.scalars(query.order_by(Ticket.created_at.desc()).limit(limit))
         return list(result)
 
-    async def get_any(self, ticket_id: int) -> Ticket | None:
+    async def get_any(self, ticket_id: UUID) -> Ticket | None:
         return await self.db.get(Ticket, ticket_id)
 
-    async def set_status_any(self, ticket_id: int, status: str) -> Ticket | None:
+    async def set_status_any(self, ticket_id: UUID, status: str) -> Ticket | None:
         ticket = await self.db.get(Ticket, ticket_id)
         if ticket is None:
             return None

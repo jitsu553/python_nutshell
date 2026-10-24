@@ -1,3 +1,4 @@
+from uuid import UUID
 # app/auth/schemas.py
 from typing import Literal
 
@@ -36,7 +37,7 @@ class RefreshRequest(BaseModel):
 
 # --- Profile (returned to the client, NEVER includes password) ---
 class UserResponse(BaseModel):
-    id: int
+    id: UUID
     email: str
     is_active: bool
     role: str | None = None

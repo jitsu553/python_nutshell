@@ -1,5 +1,5 @@
 import hashlib
-import uuid
+from uuid import UUID
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,7 +14,6 @@ settings = get_settings()
 @dataclass
 class StoredFile:
     original_name: str
-    stored_name: str
     content_type: str
     size_bytes: int
     sha256: str
@@ -54,7 +53,7 @@ class LocalDocumentStorage(DocumentStorageBackend):
         self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def save(self, upload: UploadFile) -> StoredFile:
+    def save(self, upload: UploadFile, document_id: UUID) -> StoredFile:
         if not upload.filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -94,7 +93,7 @@ class LocalDocumentStorage(DocumentStorageBackend):
                 detail=f"File signature does not match {extension}",
             )
 
-        stored_name = f"{uuid.uuid4().hex}{extension}"
+        stored_name = str(document_id)
         destination = self.base_dir / stored_name
 
         total_size = 0
@@ -131,15 +130,14 @@ class LocalDocumentStorage(DocumentStorageBackend):
 
         return StoredFile(
             original_name=original_name,
-            stored_name=stored_name,
             content_type=PREFERRED_CONTENT_TYPES[extension],
             size_bytes=total_size,
             sha256=digest.hexdigest(),
         )
 
-    def build_path(self, stored_name: str) -> Path:
-        return self.base_dir / stored_name
+    def build_path(self, document_id: UUID) -> Path:
+        return self.base_dir / str(document_id)
 
-    def delete(self, stored_name: str) -> None:
-        path = self.build_path(stored_name)
+    def delete(self, document_id: UUID) -> None:
+        path = self.build_path(document_id)
         path.unlink(missing_ok=True)

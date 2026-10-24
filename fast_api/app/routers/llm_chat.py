@@ -1,3 +1,4 @@
+from uuid import UUID
 import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException
@@ -94,7 +95,7 @@ async def create_chat_session(
     dependencies=[Depends(user_rate_limit(limit=20, window_seconds=60, key_prefix="chat-msg"))],
 )
 async def send_chat_message(
-    session_id: int,
+    session_id: UUID,
     body: SendMessageRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -112,7 +113,7 @@ async def send_chat_message(
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
 async def get_chat_messages(
-    session_id: int,
+    session_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -205,8 +206,8 @@ async def ask_with_rag(
 
 @router.post("/sessions/{session_id}/approvals/{approval_id}/decision", response_model=MessageResponse | PendingApprovalResponse)
 async def decide_approval(
-    session_id: int,
-    approval_id: int,
+    session_id: UUID,
+    approval_id: UUID,
     body: ApprovalDecisionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

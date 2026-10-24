@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -8,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Uuid,
 )
 from sqlalchemy.orm import relationship
 
@@ -17,17 +19,16 @@ from app.infra.database import Base
 class Document(Base):
     __tablename__ = "documents"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
 
     user_id = Column(
-        Integer,
+        Uuid,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
     original_name = Column(String(255), nullable=False)
-    stored_name = Column(String(255), unique=True, nullable=False)
 
     content_type = Column(String(255), nullable=False)
     size_bytes = Column(Integer, nullable=False)
@@ -44,7 +45,7 @@ class Document(Base):
     )
     is_deleted = Column(Boolean, nullable=False, default=False, index=True)
     deleted_at = Column(DateTime, nullable=True)
-    deleted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    deleted_by_user_id = Column(Uuid, ForeignKey("users.id"), nullable=True)
 
     @property
     def index_status(self) -> str | None:
@@ -55,9 +56,9 @@ class Document(Base):
 class DocumentText(Base):
     __tablename__ = "document_texts"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     document_id = Column(
-        Integer,
+        Uuid,
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,

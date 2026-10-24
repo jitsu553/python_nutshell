@@ -1,3 +1,4 @@
+from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -19,17 +20,17 @@ class CreateSessionRequest(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     use_rag: bool = False
-    rag_document_id: int | None = None
+    rag_document_id: UUID | None = None
     use_tools: bool = False
 
 class SessionResponse(BaseModel):
-    id: int
+    id: UUID
     title: str | None
     system_prompt: str | None
     temperature: float | None
     max_tokens: int | None
     use_rag: bool
-    rag_document_id: int | None
+    rag_document_id: UUID | None
     created_at: datetime
     use_tools: bool
 
@@ -41,8 +42,8 @@ class SendMessageRequest(BaseModel):
 
 
 class MessageResponse(BaseModel):
-    id: int
-    session_id: int
+    id: UUID
+    session_id: UUID
     role: str
     content: str
     finish_reason: str | None
@@ -69,17 +70,17 @@ class SimilarityResponse(BaseModel):
     similarity: float 
 
 class IngestResponse(BaseModel):
-    stored_ids: list[int]
+    stored_ids: list[UUID]
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=50)
 
 class SearchResult(BaseModel):
-    id: int
+    id: UUID
     text: str
     similarity: float
-    document_id: int | None = None
+    document_id: UUID | None = None
     chunk_index: int | None = None
 
 class SearchResponse(BaseModel):
@@ -89,12 +90,12 @@ class SearchResponse(BaseModel):
 class RagAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     limit: int = Field(default=5, ge=1, le=20)
-    document_id: int | None = None
+    document_id: UUID | None = None
     min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class RagSource(BaseModel):
-    document_id: int | None
+    document_id: UUID | None
     chunk_index: int | None
     similarity: float
     text: str
@@ -106,8 +107,8 @@ class RagAskResponse(BaseModel):
     sources: list[RagSource]
 
 class PendingApprovalResponse(BaseModel):
-    id: int
-    session_id: int
+    id: UUID
+    session_id: UUID
     tool_name: str
     tool_args: dict
     status: str

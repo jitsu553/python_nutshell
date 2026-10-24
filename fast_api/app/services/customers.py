@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +20,7 @@ class CustomerService:
         await self.db.refresh(customer)
         return customer
 
-    async def get_customer_or_404(self, customer_id: int) -> Customer:
+    async def get_customer_or_404(self, customer_id: UUID) -> Customer:
         customer = await self.db.get(Customer, customer_id)
         if customer is None:
             raise HTTPException(status_code=404, detail="Customer not found")

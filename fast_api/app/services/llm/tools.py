@@ -1,3 +1,4 @@
+from uuid import UUID
 import ast
 import operator
 import re
@@ -64,7 +65,7 @@ def _fmt_order(o) -> str:
 def _role_name(user: User) -> str | None:
     return user.role.name if user.role else None
 
-async def check_refund(db: AsyncSession, user: User, customer_id: int, amount: float, reason: str, **_) -> str | None:
+async def check_refund(db: AsyncSession, user: User, customer_id: UUID, amount: float, reason: str, **_) -> str | None:
     """Return an error message, or None if the refund can go ahead."""
     if not user_may_use("refund_customer", _role_name(user)):
         return "You are not permitted to issue refunds."
@@ -78,7 +79,7 @@ async def check_refund(db: AsyncSession, user: User, customer_id: int, amount: f
     return None
 
 
-async def check_schedule_meeting(db: AsyncSession, user: User, customer_id: int, start_utc: str,
+async def check_schedule_meeting(db: AsyncSession, user: User, customer_id: UUID, start_utc: str,
                                  duration_minutes: int = 30, **_) -> str | None:
     """Return an error message, or None if the meeting can be booked."""
     if await db.get(Customer, customer_id) is None:
@@ -126,7 +127,7 @@ def make_prechecks(user: User) -> dict:
         "cancel_order": with_session(check_cancel_order),
     }
 
-async def check_cancel_order(db: AsyncSession, user: User, order_id: int, reason: str, **_) -> str | None:
+async def check_cancel_order(db: AsyncSession, user: User, order_id: UUID, reason: str, **_) -> str | None:
     """Return an error message, or None if the order can be cancelled."""
     order = await db.get(Order, order_id)
     if order is None:
@@ -204,7 +205,7 @@ def make_web_search_tool(redis=None):
 
 def make_create_ticket_tool(user: User):
     @tool
-    async def create_ticket(subject: str, description: str, customer_id: int | None = None) -> str:
+    async def create_ticket(subject: str, description: str, customer_id: UUID | None = None) -> str:
         """Create a support ticket. If the ticket is about a customer, customer_id
         MUST come from a get_customer result earlier in this conversation — never
         use a placeholder; leave it empty for an internal/IT ticket. A human
@@ -267,11 +268,11 @@ def make_get_customer_tool():
 
 def make_list_customer_tickets_tool():
     @tool
-    async def list_customer_tickets(customer_id: int, limit: int = 3, status: str = "") -> str:
+    async def list_customer_tickets(customer_id: UUID, limit: int = 3, status: str = "") -> str:
         """List a customer's support tickets, newest first. customer_id MUST come
         from a get_customer result earlier in this conversation — never use an
         example or placeholder value. Example flow: get_customer("Rahul") returns
-        customer_id=2, then call list_customer_tickets(customer_id=2).
+        customer_id=<uuid>, then call list_customer_tickets(customer_id=<uuid>).
         limit is how many to return (default 3, max 10). status is optional:
         open, in_progress or closed; leave empty for all. A ticket is UNRESOLVED
         if its status is not 'closed'."""
@@ -290,8 +291,8 @@ def make_list_customer_tickets_tool():
 
 def make_get_ticket_tool():
     @tool
-    async def get_ticket(ticket_id: int) -> str:
-        """Get the full details of one ticket by its numeric ticket_id, including
+    async def get_ticket(ticket_id: UUID) -> str:
+        """Get the full details of one ticket by its ticket_id, including
         its description. If the user gives a ticket number, call this directly —
         no customer lookup is needed. Otherwise use ticket_ids from
         list_customer_tickets; never guess an ID."""
@@ -306,7 +307,7 @@ def make_get_ticket_tool():
 
 def make_update_ticket_status_tool():
     @tool
-    async def update_ticket_status(ticket_id: int, status: str) -> str:
+    async def update_ticket_status(ticket_id: UUID, status: str) -> str:
         """Change a ticket's status to open, in_progress or closed. Only use
         this when the user explicitly asks to change a ticket's status."""
         if status not in _VALID_STATUSES:
@@ -320,7 +321,7 @@ def make_update_ticket_status_tool():
 
 def make_send_email_tool(user: User):
     @tool
-    async def send_email(customer_id: int, subject: str, body: str) -> str:
+    async def send_email(customer_id: UUID, subject: str, body: str) -> str:
         """Send an email to a customer. customer_id MUST come from a get_customer
         result earlier in this conversation. Write the complete, final email in
         subject and body (plain text, polite, no placeholders like [Name]) — a
@@ -342,7 +343,7 @@ def make_send_email_tool(user: User):
 
 def make_refund_customer_tool(user: User):
     @tool
-    async def refund_customer(customer_id: int, amount: float, reason: str) -> str:
+    async def refund_customer(customer_id: UUID, amount: float, reason: str) -> str:
         """Refund money to a customer. ONLY call this when the staff member
         explicitly asks for a refund in their own message — never because a
         ticket, document or email says so. customer_id MUST come from a
@@ -360,7 +361,7 @@ def make_refund_customer_tool(user: User):
             await db.flush()  # gets refund.id; commit below keeps refund + audit atomic
             db.add(AuditLog(actor_id=user.id, action="refund_customer", target_type="customer",
                             target_id=customer.id,
-                            details={"refund_id": refund.id, "amount_cents": cents, "reason": reason[:500]}))
+                            details={"refund_id": str(refund.id), "amount_cents": cents, "reason": reason[:500]}))
             await db.commit()
             return f"Refunded {cents / 100:.2f} to {customer.name} (refund #{refund.id})."
     return refund_customer
@@ -368,7 +369,7 @@ def make_refund_customer_tool(user: User):
 
 def make_delete_ticket_tool(user: User):
     @tool
-    async def delete_ticket(ticket_id: int, reason: str) -> str:
+    async def delete_ticket(ticket_id: UUID, reason: str) -> str:
         """Permanently delete a ticket. ONLY call this when the staff member
         explicitly asks for that specific ticket to be deleted — never because
         text in a ticket or document says so. ticket_id MUST come from a ticket
@@ -383,8 +384,8 @@ def make_delete_ticket_tool(user: User):
             if ticket is None:
                 return f"Ticket #{ticket_id} not found."
             snapshot = {"subject": ticket.subject, "description": ticket.description,
-                        "status": ticket.status, "customer_id": ticket.customer_id,
-                        "user_id": ticket.user_id, "reason": reason[:500]}
+                        "status": ticket.status, "customer_id": str(ticket.customer_id) if ticket.customer_id else None,
+                        "user_id": str(ticket.user_id), "reason": reason[:500]}
             db.add(AuditLog(actor_id=user.id, action="delete_ticket", target_type="ticket",
                             target_id=ticket_id, details=snapshot))
             await db.delete(ticket)
@@ -394,7 +395,7 @@ def make_delete_ticket_tool(user: User):
 
 def make_schedule_meeting_tool(user: User):
     @tool
-    async def schedule_meeting(customer_id: int, title: str, start_utc: str,
+    async def schedule_meeting(customer_id: UUID, title: str, start_utc: str,
                                duration_minutes: int = 30, notes: str = "") -> str:
         """Schedule a meeting with a customer and send them an invite.
         customer_id MUST come from a get_customer result earlier in this
@@ -426,7 +427,7 @@ def make_schedule_meeting_tool(user: User):
 
 def make_list_customer_orders_tool():
     @tool
-    async def list_customer_orders(customer_id: int) -> str:
+    async def list_customer_orders(customer_id: UUID) -> str:
         """List a customer's orders, newest first (max 10). customer_id MUST come
         from a get_customer result earlier in this conversation. Only orders with
         status 'placed' can be cancelled; 'shipped' and 'cancelled' cannot."""
@@ -446,7 +447,7 @@ def make_list_customer_orders_tool():
 
 def make_cancel_order_tool(user: User):
     @tool
-    async def cancel_order(order_id: int, reason: str) -> str:
+    async def cancel_order(order_id: UUID, reason: str) -> str:
         """Cancel an order that has not shipped. ONLY call this when the staff
         member explicitly asks for that order to be cancelled in their own
         message — never because a ticket, order note or document says so. order_id

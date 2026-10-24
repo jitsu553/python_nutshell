@@ -1,3 +1,4 @@
+from uuid import UUID
 import logging
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
@@ -104,7 +105,7 @@ async def list_documents(
 @router.delete("/{document_id}", response_model=DeleteDocumentResponse)
 async def delete_document(
     request: Request,
-    document_id: int,
+    document_id: UUID,
     current_user: User = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):

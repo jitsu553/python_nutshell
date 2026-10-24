@@ -1,3 +1,4 @@
+from uuid import UUID
 """Background indexing: upload -> Redis queue -> extract text -> chunk -> embed -> pgvector.
 
 Jobs are document ids on a Redis list; N asyncio workers per pod BLPOP them. Status lives
@@ -37,7 +38,7 @@ QUEUED_PREFIX = "documents:index:queued:"  # per-id marker so a document is queu
 EVENTS_CHANNEL = "documents:events"  # pub/sub: fire-and-forget status events, not jobs
 
 
-async def enqueue(redis: Redis | None, document_ids: list[int]) -> list[int]:
+async def enqueue(redis: Redis | None, document_ids: list[UUID]) -> list[UUID]:
     """Queue ids not already waiting in the queue; returns the ones actually added."""
     ids = list(dict.fromkeys(document_ids))
     if redis is None or not ids:
@@ -53,7 +54,7 @@ async def enqueue(redis: Redis | None, document_ids: list[int]) -> list[int]:
         new = [i for i, ok in zip(ids, added) if ok]
         if new:
             try:
-                await redis.rpush(QUEUE_KEY, *new)
+                await redis.rpush(QUEUE_KEY, *map(str, new))
             except RedisError:
                 await redis.delete(*(f"{QUEUED_PREFIX}{i}" for i in new))
                 raise
@@ -65,9 +66,9 @@ async def enqueue(redis: Redis | None, document_ids: list[int]) -> list[int]:
         return []
 
 
-async def _publish(app: FastAPI, document_id: int, status: str, error: str | None = None) -> None:
+async def _publish(app: FastAPI, document_id: UUID, status: str, error: str | None = None) -> None:
     try:
-        event = {"document_id": document_id, "status": status, "error": error}
+        event = {"document_id": str(document_id), "status": status, "error": error}
         await getattr(app.state, REDIS_APP_STATE_KEY).publish(EVENTS_CHANNEL, json.dumps(event))
     except Exception:
         log.warning("could not publish event for document %s", document_id)
@@ -77,7 +78,7 @@ def _deadline(seconds: float) -> datetime:
     return datetime.utcnow() + timedelta(seconds=seconds)
 
 
-async def _claim_and_extract(document_id: int) -> str | None:
+async def _claim_and_extract(document_id: UUID) -> str | None:
     """Atomically claim a pending job (dupes on the queue are harmless) and extract text."""
     async with AsyncSessionLocal() as db:
         document = await db.get(Document, document_id)
@@ -103,14 +104,14 @@ async def _claim_and_extract(document_id: int) -> str | None:
             return None
         log.info("document %s claimed", document_id)
         # ponytail: local storage only; s3 backend would need a download-to-temp step here
-        path = LocalDocumentStorage().build_path(document.stored_name)
+        path = LocalDocumentStorage().build_path(document.id)
         # pypdf / python-docx are blocking, so file checks and parsing run in a thread
         if not await asyncio.to_thread(path.exists):
             raise FileNotFoundError("Stored file not found")
         return await asyncio.to_thread(extract_text, path, document.content_type)
 
 
-async def _save(document_id: int, text: str, chunks: list[str], vectors: list[list[float]]) -> None:
+async def _save(document_id: UUID, text: str, chunks: list[str], vectors: list[list[float]]) -> None:
     async with AsyncSessionLocal() as db:
         document = await db.get(Document, document_id)
         await db.execute(delete(TextEmbedding).where(TextEmbedding.document_id == document_id))
@@ -134,7 +135,7 @@ async def _save(document_id: int, text: str, chunks: list[str], vectors: list[li
         await db.commit()
 
 
-async def _fail(document_id: int, error: str) -> float | None:
+async def _fail(document_id: UUID, error: str) -> float | None:
     """Record the failure; return the retry delay in seconds, or None once the job is dead."""
     async with AsyncSessionLocal() as db:
         entry = await db.scalar(select(DocumentText).where(DocumentText.document_id == document_id))
@@ -153,7 +154,7 @@ async def _fail(document_id: int, error: str) -> float | None:
         return delay
 
 
-async def _process(app: FastAPI, document_id: int) -> None:
+async def _process(app: FastAPI, document_id: UUID) -> None:
     started = time.monotonic()
     try:
         text = await _claim_and_extract(document_id)
@@ -187,7 +188,7 @@ async def _worker(app: FastAPI) -> None:
         try:
             item = await redis.blpop(QUEUE_KEY, timeout=5)
             if item:
-                document_id = int(item[1])
+                document_id = UUID(item[1])
                 await redis.delete(f"{QUEUED_PREFIX}{document_id}")  # may be queued again now
                 await _process(app, document_id)
         except asyncio.CancelledError:
@@ -197,7 +198,7 @@ async def _worker(app: FastAPI) -> None:
             await asyncio.sleep(1)
 
 
-async def _sweep() -> list[int]:
+async def _sweep() -> list[UUID]:
     """Re-queue active rows past their deadline (crashed pod, retry backoff, lost queue entry)."""
     # ponytail: a job slower than the lease may run twice; raise documents_index_lease_seconds
     async with AsyncSessionLocal() as db:

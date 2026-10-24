@@ -1,3 +1,4 @@
+from uuid import UUID
 
 from fastapi import HTTPException
 from datetime import datetime
@@ -111,7 +112,7 @@ _mcp_client = MultiServerMCPClient({
 
 def format_sse(data: dict, event: str | None = None) -> str:
     frame = f"event: {event}\n" if event else ""
-    return f"{frame}data: {json.dumps(data)}\n\n"
+    return f"{frame}data: {json.dumps(data, default=str)}\n\n"
 
 
 async def stream_chat_completion(client: httpx.AsyncClient, payload: dict):
@@ -222,7 +223,7 @@ async def store_embedding(
     text: str,
     vector: list[float],
     model: str,
-    document_id: int | None = None,
+    document_id: UUID | None = None,
     chunk_index: int | None = None,
 ) -> TextEmbedding:
     row = TextEmbedding(
@@ -242,7 +243,7 @@ async def find_similar(
     db: AsyncSession,
     query_vector: list[float],
     limit: int = 5,
-    document_id: int | None = None,
+    document_id: UUID | None = None,
     min_similarity: float | None = None,
 ) -> list[tuple[TextEmbedding, float]]:
     distance_expr = TextEmbedding.embedding.cosine_distance(query_vector)
@@ -297,12 +298,15 @@ async def summarize_messages(messages: list[dict], llm: ChatOpenAI) -> str:
     result = await llm.ainvoke([SystemMessage(content=SUMMARY_SYSTEM_PROMPT), HumanMessage(content=transcript)])
     return str(result.content)
 
+def messages_after_summary(session: ChatSession) -> list[ChatMessage]:
+    # uuids aren't ordered, so cut by position in the created_at-ordered list
+    ids = [m.id for m in session.messages]
+    start = ids.index(session.summarized_through_message_id) + 1 if session.summarized_through_message_id in ids else 0
+    return session.messages[start:]
+
 async def maybe_compact_history(db: AsyncSession, session: ChatSession, llm: ChatOpenAI) -> None:
     settings = get_settings()
-    if session.summarized_through_message_id is not None:
-        new_messages = [m for m in session.messages if m.id > session.summarized_through_message_id]
-    else:
-        new_messages = list(session.messages)
+    new_messages = messages_after_summary(session)
 
     new_tokens = sum(count_tokens_approx(m.content) for m in new_messages)
     if new_tokens <= settings.llm_history_compact_threshold:
@@ -333,9 +337,9 @@ def message_to_wire(message: ChatMessage) -> dict:
         wire["tool_call_id"] = message.tool_call_id
     return wire
 
-async def get_user_memories(db: AsyncSession, user_id: int, limit: int = 20) -> list[UserMemory]:
+async def get_user_memories(db: AsyncSession, user_id: UUID, limit: int = 20) -> list[UserMemory]:
     result = await db.scalars(
-        select(UserMemory).where(UserMemory.user_id == user_id).order_by(UserMemory.id.desc()).limit(limit)
+        select(UserMemory).where(UserMemory.user_id == user_id).order_by(UserMemory.created_at.desc()).limit(limit)
     )
     return list(result)
 
@@ -359,7 +363,7 @@ class ChatService:
         await self.db.refresh(session)
         return session
 
-    async def get_session_or_404(self, session_id: int) -> ChatSession:
+    async def get_session_or_404(self, session_id: UUID) -> ChatSession:
         session = await self.db.scalar(
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == self.current_user.id)
         )
@@ -367,7 +371,7 @@ class ChatService:
             raise HTTPException(status_code=404, detail="Chat session not found")
         return session
 
-    async def list_messages(self, session_id: int) -> list[ChatMessage]:
+    async def list_messages(self, session_id: UUID) -> list[ChatMessage]:
         return (await self.get_session_or_404(session_id)).messages
 
     async def _add_user_message(self, session: ChatSession, content: str) -> ChatMessage:
@@ -449,10 +453,7 @@ class ChatService:
         if session.summary:
             messages.append({"role": "system", "content": f"Summary of earlier conversation:\n{session.summary}"})
 
-        if session.summarized_through_message_id is not None:
-            recent = [m for m in session.messages if m.id > session.summarized_through_message_id]
-        else:
-            recent = list(session.messages)
+        recent = messages_after_summary(session)
 
         history = [message_to_wire(m) for m in recent]
         non_history_tokens = sum(count_tokens_approx(m["content"]) for m in messages)
@@ -533,7 +534,7 @@ class ChatService:
         )
         return list(result)
 
-    async def send_message(self, session_id: int, content: str) -> ChatMessage:
+    async def send_message(self, session_id: UUID, content: str) -> ChatMessage:
         session = await self.get_session_or_404(session_id)
         user_message = await self._add_user_message(session, content)
 
@@ -556,7 +557,7 @@ class ChatService:
 
         return await self._save_new_messages(session, result["messages"][len(messages):])
     
-    async def send_message_stream(self, session_id: int, content: str):
+    async def send_message_stream(self, session_id: UUID, content: str):
         session = await self.get_session_or_404(session_id)
         user_message = await self._add_user_message(session, content)
 
@@ -616,7 +617,7 @@ class ChatService:
 
         return event_generator()
 
-    async def resolve_approval(self, session_id: int, approval_id: int, approved: bool, reason: str = "") -> ChatMessage | PendingApproval:
+    async def resolve_approval(self, session_id: UUID, approval_id: UUID, approved: bool, reason: str = "") -> ChatMessage | PendingApproval:
         session = await self.get_session_or_404(session_id)
         approval = await self.db.scalar(
             select(PendingApproval).where(PendingApproval.id == approval_id, PendingApproval.session_id == session_id)

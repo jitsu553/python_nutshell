@@ -1,3 +1,4 @@
+from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
@@ -9,7 +10,7 @@ class CreateCustomerRequest(BaseModel):
 
 
 class CustomerResponse(BaseModel):
-    id: int
+    id: UUID
     name: str
     email: str
     plan: str

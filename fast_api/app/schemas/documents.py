@@ -1,3 +1,4 @@
+from uuid import UUID
 from datetime import datetime
 from typing import Literal
 
@@ -5,8 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class DocumentResponse(BaseModel):
-    id: int
-    user_id: int
+    id: UUID
+    user_id: UUID
     original_name: str
     content_type: str
     size_bytes: int
@@ -18,7 +19,7 @@ class DocumentResponse(BaseModel):
 
 
 class DeleteDocumentResponse(BaseModel):
-    id: int
+    id: UUID
     deleted: bool
 
 
@@ -40,7 +41,7 @@ class DocumentListResponse(BaseModel):
 
 
 class ReindexRequest(BaseModel):
-    document_ids: list[int] = Field(min_length=1, max_length=1000)
+    document_ids: list[UUID] = Field(min_length=1, max_length=1000)
 
 
 class ReindexResponse(BaseModel):

@@ -1,3 +1,4 @@
+from uuid import UUID
 import json
 import logging
 from datetime import datetime, timezone
@@ -9,8 +10,8 @@ logger = logging.getLogger("document_audit")
 def audit_event(
     *,
     action: str,
-    user_id: int | None,
-    document_id: int | None = None,
+    user_id: UUID | None,
+    document_id: UUID | None = None,
     outcome: str = "success",
     ip: str | None = None,
     details: dict[str, Any] | None = None,
@@ -24,4 +25,4 @@ def audit_event(
         "ip": ip,
         "details": details or {},
     }
-    logger.info(json.dumps(payload, separators=(",", ":"), ensure_ascii=True))
+    logger.info(json.dumps(payload, separators=(",", ":"), ensure_ascii=True, default=str))
