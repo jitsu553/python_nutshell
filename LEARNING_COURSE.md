@@ -6,9 +6,18 @@ You have already built the backend (FastAPI, auth, Postgres, Redis, documents pi
 
 1. Chapters are numbered in **study order**. Go top to bottom. Each chapter lists what it **Needs**.
 2. Pick the next chapter. Ask: *"Tailor a lesson for Chapter N."* A lesson is then written against your actual code.
-3. Do the **Build** items in the repo. Tick **Done when**.
+3. **You write the code yourself.** Claude does not edit the repo for the Build items. For each lesson Claude gives you a step-by-step guide: which file to create or change (full path), the exact code to write, and the command to run after each step.
+4. Tick **Done when** only once you can explain what you wrote.
 
 Each chapter has: **Needs**, **Why**, **Where it plugs into your repo**, **Learn**, **Build**, **Done when**.
+
+**Working agreement.**
+- Every lesson is a numbered list of steps. Each step names the **file path**, whether to **create** or **update** it, the **code** (with the changed lines marked when updating), and a **verify** step (a command or test to run, with the expected result).
+- Claude reads your actual files first, so the code and line references match your repo.
+- Claude explains non-obvious code so you write it knowing why.
+- Risky steps (schema changes against your real database, deleting data, hosted-API spend) are flagged with a warning, and you decide when to run them.
+- Each lesson ends with an "explain it back" check.
+- If you paste an error or test output, Claude helps you debug it; Claude edits repo files only if you explicitly ask.
 
 ## The one-picture map
 
