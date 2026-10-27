@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: too-big
+spec:
+  restartPolicy: Never
+  containers:
+    - name: too-big
+      image: nginx
+      resources:
+        requests:
+          memory: 500Gi

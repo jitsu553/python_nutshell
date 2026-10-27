@@ -85,9 +85,9 @@ If `kubectl get nodes` fails, Rancher Desktop's Kubernetes is not running; start
 
 | # | Chapter | Level | Done |
 |---|---|---|---|
-| 1 | Why Kubernetes, and the mental model | Basic | [ ] |
-| 2 | Your local cluster and kubectl fluency | Basic | [ ] |
-| 3 | Pods | Basic | [ ] |
+| 1 | Why Kubernetes, and the mental model | Basic | [x] |
+| 2 | Your local cluster and kubectl fluency | Basic | [x] |
+| 3 | Pods | Basic | [x] |
 | 4 | Deployments, ReplicaSets, rollouts | Basic | [ ] |
 | 5 | Services and DNS | Basic | [ ] |
 | 6 | ConfigMaps and Secrets | Basic | [ ] |

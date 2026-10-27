@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-demo
+spec:
+  restartPolicy: Never
+  containers:
+    - name: hog
+      image: nutshell-api:0.1
+      imagePullPolicy: Never
+      command: ["python", "-c", "x = bytearray(200 * 1024 * 1024); print('allocated')"]
+      resources:
+        limits:
+          memory: 10Mi
