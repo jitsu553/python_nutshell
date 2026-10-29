@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  labels:
+    app: mcp-server
+spec:
+  replicas: 2
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      app: mcp-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          image: nutshell-api:0.2
+          # image: nutshell-api:9.9
+          imagePullPolicy: Never
+          command: ["python", "-m", "app.mcp_server.server"]
+          ports:
+            - containerPort: 8100
+          env:
+            - name: DATABASE_URL
+              value: postgresql+psycopg://postgres:postgres@postgres:5432/fastapi_db
+            - name: SECRET_KEY
+              value: dev-only-not-a-secret
+            - name: MCP_AUTH_TOKEN
+              value: dev-only-token
+            - name: ROLLOUT_NOTE
+              value: "run-1"
