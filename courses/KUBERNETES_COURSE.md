@@ -1,4 +1,4 @@
-# python_nutshell: Kubernetes learning course
+    # python_nutshell: Kubernetes learning course
 
 You already know Docker and use it here: `fast_api/Dockerfile` plus a `docker-compose.yml` with `postgres` (pgvector), `redis`, `mcp-server`, `api` and an optional `ollama`. This course teaches Kubernetes from zero, using **that same stack** as the running example. By the end you will run the whole app on a local cluster, then on production-style patterns (Helm, autoscaling, security, GitOps).
 
@@ -88,8 +88,8 @@ If `kubectl get nodes` fails, Rancher Desktop's Kubernetes is not running; start
 | 1 | Why Kubernetes, and the mental model | Basic | [x] |
 | 2 | Your local cluster and kubectl fluency | Basic | [x] |
 | 3 | Pods | Basic | [x] |
-| 4 | Deployments, ReplicaSets, rollouts | Basic | [ ] |
-| 5 | Services and DNS | Basic | [ ] |
+| 4 | Deployments, ReplicaSets, rollouts | Basic | [x] |
+| 5 | Services and DNS | Basic | [x] |
 | 6 | ConfigMaps and Secrets | Basic | [ ] |
 | 7 | Storage: volumes, PV, PVC | Intermediate | [ ] |
 | 8 | Jobs and CronJobs | Intermediate | [ ] |

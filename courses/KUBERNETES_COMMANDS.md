@@ -42,3 +42,11 @@
 | `kubectl diff -f <file>` | Shows what `apply` would change | Useful before `apply` and for spotting drift |
 | `docker build -t <image> <folder>` | Builds an image the local cluster can use | Core command; use a new tag for each version |
 | `docker tag <image> <new-image>` | Adds a second tag to an image | Only for practising updates; real versions come from real builds |
+| `kubectl get svc` | Lists Services with type, CLUSTER-IP and ports | Core command; `EXTERNAL-IP <pending>` means no load balancer controller |
+| `kubectl get svc <service>` | Shows one Service | Quick check that the type and ports are what you wrote |
+| `kubectl get endpoints <service>` | Lists the Pod IPs and ports a Service sends traffic to | First check when a Service fails: `<none>` means the selector matches no Pods. Deprecated in favour of EndpointSlices but still handy |
+| `kubectl get endpointslices` | Same information in the newer object | What Kubernetes uses internally; use it once `Endpoints` is removed |
+| `kubectl describe svc <service>` | Shows the Service's selector, targetPort and endpoints | Compare its `Selector` and `TargetPort` with the Pods and the app's real port |
+| `kubectl get pods -l <label> -o wide` | Lists matching Pods with their IPs | The IPs should match the Service's endpoints |
+| `kubectl port-forward svc/<service> <local-port>:<service-port>` | Forwards a local port to a Service | Everyday way to reach a ClusterIP Service from Windows; the left number is the local port you choose |
+| `kubectl delete svc <service>` | Deletes a Service | Safe: the Pods keep running; recreate it from the file with `apply` |
