@@ -10,7 +10,6 @@ from app.services.llm.tool_registry import requires_approval, user_may_use, not_
 def user(role):
     return SimpleNamespace(role=SimpleNamespace(name=role) if role else None)
 
-@pytest.mark.xfail(strict=True, reason="known: early `return current_user` at auth/dependencies.py:67, left on purpose")
 def test_require_role_blocks_non_admin():
     check = require_role("admin")
     assert check(current_user=user("admin")).role.name == "admin"

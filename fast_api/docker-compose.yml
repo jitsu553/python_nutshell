@@ -68,6 +68,19 @@ services:
     entrypoint: ["/bin/sh", "-c", "grep -v '^[[:space:]]*\\(#\\|$$\\)' /models.txt | while read -r m; do ollama pull \"$$m\" || exit 1; done"]
     restart: "no"
 
+  migrate:
+    build: .
+    container_name: fast_api_migrate
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
   mcp-server:
     build: .
     container_name: fast_api_mcp
@@ -78,6 +91,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./:/app
     command: ["python", "-m", "app.mcp_server.server"]
@@ -100,6 +115,8 @@ services:
         required: false
       mcp-server:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./:/app
     command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

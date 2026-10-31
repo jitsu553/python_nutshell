@@ -17,12 +17,10 @@ def _client_identifier(request: Request) -> str:
     Prefer X-Forwarded-For (for reverse proxies), fallback to direct client IP.
     """
     xff = request.headers.get("x-forwarded-for")
-    print("xff", xff)
     if xff:
         return xff.split(",")[0].strip()
 
     if request.client and request.client.host:
-        print("client host", request.client.host)
         return request.client.host
 
     return "unknown"
