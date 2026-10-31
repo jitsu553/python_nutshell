@@ -47,7 +47,7 @@ Four pillars. Every term you heard belongs to one of them.
 
 | # | Chapter | Pillar | Status |
 |---|---|---|---|
-| 1 | Safety net: tests with a fake LLM, migrations, cleanup | Foundation | [ ] |
+| 1 | Safety net: tests with a fake LLM, migrations, cleanup | Foundation | [x] |
 | 2 | The AI quality lifecycle and vocabulary | Map | [ ] |
 | 3 | Semantic search fundamentals | Trust | [ ] |
 | 4 | Tracing with Langfuse | See | [ ] |
